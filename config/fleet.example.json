@@ -1,0 +1,39 @@
+{
+  "registry": {
+    "defaults": { "heartbeat_period": 60 },
+    "services": {
+      "gateway": {
+        "name": "LLM Gateway",
+        "port": 8080,
+        "health": { "path": "/", "method": "GET", "timeout": 5 },
+        "canary": {
+          "type": "http",
+          "path": "/v1/models",
+          "expect": { "status": 200, "min_bytes": 2 }
+        },
+        "recovery": "watchdogs/gateway_watchdog.py",
+        "heartbeat_period": 60
+      },
+      "local-llm": {
+        "name": "Local LLM Server",
+        "port": 1234,
+        "health": { "path": "/", "method": "GET", "timeout": 3 },
+        "canary": null,
+        "recovery": null
+      }
+    }
+  },
+  "watchdog": {
+    "state_file": "runtime/watchdog-state.json",
+    "threshold": 2,
+    "re_alert_interval": 15,
+    "heal_cooldown_seconds": 180,
+    "net_probe_targets": [["223.5.5.5", 443], ["119.29.29.29", 443], ["1.1.1.1", 443]],
+    "net_probe_timeout": 3.0,
+    "pause_gates": {
+      "local-llm": { "ports": [1234], "marker_file": "PAUSE_LLM" }
+    },
+    "alert_log": "runtime/alerts.log",
+    "alert_command": null
+  }
+}
