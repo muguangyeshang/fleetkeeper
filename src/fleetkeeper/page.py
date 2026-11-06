@@ -79,6 +79,9 @@ main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
 .stack{display:flex;flex-direction:column;gap:16px;min-width:0}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;
  padding:16px;box-shadow:var(--shadow)}
+.panel summary{font-size:14.5px;font-weight:650;cursor:pointer;user-select:none}
+.panel summary:hover{color:var(--brand)}
+.panel details{margin:0}
 .panel h2{font-size:14.5px;margin:0 0 12px;font-weight:650;display:flex;
  align-items:center;gap:8px;flex-wrap:wrap}
 .panel h2 .count{font-weight:400;color:var(--sub);font-size:12.5px}
@@ -297,22 +300,22 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
         同名服务会更新端口；第一次保存时会自动替换掉占位的示例服务。配置文件：<code id="cfgpath">-</code></p>
       </section>
 
-      <section class="panel" id="intro">
-        <h2>备选：手动选一个场景</h2>
+      <details class="panel" id="intro">
+        <summary>备选：手动选一个场景（平时用不到）</summary>
         <p class="hint" id="intro-text"></p>
         <form id="preset-form">
           <select id="preset-select" name="preset"></select>
           <button class="primary" type="submit">套用场景</button>
         </form>
         <p class="hint" id="preset-detail"></p>
-      </section>
+      </details>
 
-      <section class="panel">
-        <h2>配置全文</h2>
+      <details class="panel">
+        <summary>配置全文（排障时才需要看）</summary>
         <div class="filters"><button class="mini" id="btn-config">读取配置</button>
           <button class="mini" id="btn-export-side">另存为文件</button></div>
         <pre id="config-text">点「读取配置」查看当前 fleet.json（敏感值已打码）。</pre>
-      </section>
+      </details>
 
       <section class="panel">
         <h2>查看服务日志</h2>
@@ -336,7 +339,8 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
     <div class="row"><label>心跳周期(秒)</label><input id="edit-period" type="number" min="5" max="86400"></div>
     <div class="row"><label>日志文件</label><input id="edit-log" placeholder="svc.log"></div>
     <div class="foot"><button class="primary" id="btn-edit-save">保存修改</button>
-      <button id="btn-edit-close">取消</button></div>
+      <button id="btn-edit-close">取消</button>
+      <button class="mini" id="btn-edit-heartbeat" title="这台服务自己不会上报心跳时，替它补一条当前证据">写入一条心跳</button></div>
     <p class="foot-note">只允许改这几项。恢复命令、通知地址这类要执行的内容只能在配置文件里改，页面不接收。</p>
   </div>
 </main>
@@ -621,7 +625,7 @@ function renderServices(st){
      evid+issues+notes+
      '<div class="card-actions">'+
        '<button class="mini" data-act="check" data-key="'+esc(s.key)+'">体检这一个</button>'+
-       '<button class="mini" data-act="heartbeat" data-key="'+esc(s.key)+'">写入心跳</button>'+
+
        '<button class="mini" data-act="edit" data-key="'+esc(s.key)+'">编辑</button>'+
        '<button class="mini" data-act="pause" data-key="'+esc(s.key)+'">暂停</button>'+
        '<button class="mini danger" data-act="delete" data-key="'+esc(s.key)+'">删除</button>'+
@@ -869,6 +873,12 @@ el('btn-log').onclick=function(){
  }).catch(function(e){say('日志读取失败：'+explain(e),true);});
 };
 el('btn-edit-close').onclick=function(){el('editor').style.display='none';editKey=null;};
+el('btn-edit-heartbeat').onclick=function(){
+ if(!editKey)return;
+ post('/api/heartbeat',{key:editKey,ok:true}).then(function(r){
+   say(r.message||'已写入一条心跳');
+ }).catch(function(e){say('操作失败：'+explain(e),true);});
+};
 el('btn-edit-save').onclick=function(){
  if(!editKey){el('editor').style.display='none';return;}
  var patch={
