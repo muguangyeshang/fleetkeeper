@@ -1,11 +1,26 @@
 # fleetkeeper
 
 **Evidence-based guardian for a fleet of local AI services.**
-Pure standard library. Zero dependencies. Windows-first, runs anywhere Python runs.
+Pure standard library. Zero dependencies. Windows-first, Linux supported. On
+hosts where `netstat` exposes no PID (macOS, hardened containers) the ladder
+degrades to port-level evidence and says so explicitly — it never claims
+"healthy" on a proof it did not collect.
 
+## Install
+
+Not published on PyPI yet. Two ways, both from a checkout:
+
+```bash
+# A) editable install — gives you the `fleetkeeper` console command
+python -m pip install -e .
+fleetkeeper --help
+
+# B) install nothing — copy src/fleetkeeper anywhere, or point PYTHONPATH at it
+PYTHONPATH=src python -m fleetkeeper.cli --config config/fleet.json doctor
 ```
-pip install fleetkeeper        # or just copy the src/fleetkeeper folder
-```
+
+The Quick start below assumes A. With B, prefix each command with
+`PYTHONPATH=src` (Windows: `set PYTHONPATH=src` first).
 
 ---
 
@@ -60,6 +75,10 @@ answers but which has no heartbeat shows as `NO_HEARTBEAT` — listed as
 "insufficiently covered", not healthy, not broken. Evidence stops at L4;
 L5 (a human actually got what they wanted) is never auto-claimed.
 
+A canary hitting the same endpoint as the health check is automatically
+downgraded to `protocol_only`: it cannot prove business success, and
+fleetkeeper refuses to pretend otherwise.
+
 ## Quick start
 
 ```bash
@@ -105,30 +124,56 @@ On Linux/macOS: `* * * * * cd /path && python -m fleetkeeper.cli --config config
 
 ```jsonc
 {
-  "registry": { "services": {
-    "gateway": {
-      "name": "LLM Gateway", "port": 8080,
-      "health": { "path": "/", "method": "GET", "timeout": 5 },
-      "canary": { "type": "http", "path": "/v1/models",
-                  "expect": { "status": 200, "json_path": "data", "min_items": 1 } },
-      "recovery": "watchdogs/gateway_watchdog.py"   // what to launch when dead
+  "registry": {
+    "defaults": { "heartbeat_period": 60 },   // inherited by every service
+    "services": {
+      "gateway": {
+        "name": "LLM Gateway", "port": 8080,
+        "health": { "path": "/", "method": "GET", "timeout": 5 },
+        "canary": {
+          "type": "http", "path": "/v1/models",
+          "expect": { "status": 200, "json_path": "data", "min_items": 1 }
+        },
+        "recovery": "watchdogs/gateway_watchdog.py"   // what to launch when dead
+      }
     }
-  }},
+  },
   "watchdog": {
     "threshold": 2,                  // consecutive bad sweeps before first alert
     "re_alert_interval": 15,         // re-alert cadence (sweeps)
     "heal_cooldown_seconds": 180,    // PER PORT
-    "net_probe_targets": [["223.5.5.5", 443]],
-    "pause_gates": { "llm": { "ports": [1234], "marker_file": "PAUSE_LLM" } },
+    "net_probe_targets": [["1.1.1.1", 443]],
+    "pause_gates": { "gateway": { "ports": [8080], "marker_file": "PAUSE_GW" } },
     "alert_log": "runtime/alerts.log"
   }
 }
 ```
 
-The canary `expect` block supports `status`, `min_bytes`, and
-`json_path` + `min_items`. A canary pointing at the same endpoint as the
-health check is automatically downgraded to `protocol_only` — it cannot
-prove business success, and fleetkeeper refuses to pretend otherwise.
+Notes that matter in practice:
+
+- A canary may omit `port` and `host` — they default to the service's port and
+  `127.0.0.1`. Omitting them used to pin the ladder at L3; the README example
+  is now a regression test.
+- Every probe reads at most 64 KiB of body (`MAX_PROBE_BYTES`). A canary with
+  `json_path` inspects the **same** response — one request per canary, not two.
+- `expect` supports `status`, `min_bytes`, and `json_path` + `min_items`.
+- `registry.defaults` is merged into each service; service-level keys win.
+  `heartbeat_dir`, `state_file`, `alert_log` and `pause_gates.marker_file`
+  resolve relative to the config file, not the current working directory.
+
+## Platform notes
+
+| Platform | Listener source | Result |
+|---|---|---|
+| Windows | `netstat -ano` (`LISTENING` + PID) | full ladder |
+| Linux | `netstat -tlnp` (parses `4321/python3`) | full ladder |
+| macOS / no `-p` | `netstat -an` (`*.80`, no PID) | L1 reports "PID unavailable"; L2+ still works |
+| `psutil` installed | `psutil.net_connections` | preferred on every platform |
+
+When no PID can be recovered, `proc.py` emits the sentinel `-1` and
+`evidence.py` records "a listener exists but is unidentified" — it does not
+collapse the ladder to L0. If `netstat` is absent entirely, install `psutil`
+(optional, never a hard dependency) or the fleet will report L0.
 
 ## CLI
 
@@ -148,18 +193,34 @@ fleetkeeper logs SERVICE [--tail N]      service logs, redacted by default
 - **No healing during a network outage.** Recorded, never executed.
 - **No "everything is fine" claims.** Uncovered services are listed as
   uncovered, not silently green.
+- **No unbounded reads.** Probes cap the response body at 64 KiB.
+- **No duplicate canary traffic.** JSON inspection reuses the probe response.
 
 ## Tested
 
-41 pytest tests, including a fake live fleet over real HTTP sockets:
+51 pytest tests, including a fake live fleet over real HTTP sockets:
 cooldown persistence across green sweeps, duplicate-instance handling,
 network-down suspension, pause gates, alert storm suppression, clock-skew
 poisoning, lease renewal keeping its baseline, redaction of keys/JWTs/
 private-key markers, and end-to-end CLI runs.
 
+Ten regression tests (`test_regressions.py`) lock the four review findings:
+README-example canary reaching L4, bounded body reads, one request per
+canary, `defaults` merging, config paths not leaking between runs, Windows /
+Linux / macOS netstat parsing, and unknown-PID tolerance.
+
 ```bash
 python -m pytest
 ```
+
+## Changelog
+
+- **0.1.1** — canary `port` fallback; bounded probe reads; single canary
+  request; `registry.defaults` merge; explicit config path (no module-level
+  mutable state); POSIX netstat PID parsing; unknown-PID tolerance; README
+  install instructions made truthful.
+- **0.1.0** — initial extraction: evidence ladder, heartbeats, watchdog,
+  safe writes, PID-only ops, redaction, CLI, 41 tests.
 
 ## License
 

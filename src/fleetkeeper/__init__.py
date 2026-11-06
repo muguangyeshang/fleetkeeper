@@ -8,4 +8,4 @@ as small, pure-stdlib modules with an evidence ladder (L0..L4):
 
     L0 config exists -> L1 process -> L2 port -> L3 protocol -> L4 business
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"

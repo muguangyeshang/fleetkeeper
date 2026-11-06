@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fleetkeeper"
-version = "0.1.0"
+version = "0.1.1"
 description = "Evidence-based guardian for a fleet of local AI services: port watchdog with self-heal cooldowns, deadman-switch heartbeats, L0-L4 canary probes, and safe config writes. Pure standard library."
 readme = "README.md"
 requires-python = ">=3.8"

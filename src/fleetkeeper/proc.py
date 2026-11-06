@@ -24,9 +24,60 @@ class Refused(Exception):
     pass
 
 
+def _port_from(token):
+    """0.0.0.0:8000 / [::]:8000 / *.80 (macOS) -> 8000 / 80."""
+    tail = token.rsplit(":", 1)[-1]
+    if not tail.isdigit():
+        tail = tail.rsplit(".", 1)[-1]
+    return int(tail)
+
+
+def _parse_netstat(raw, is_nt, ports=None):
+    """Pure parser for `netstat -ano` (Windows) / `-tlnp` (Linux) / `-an`
+    (macOS). Split out from subprocess so both line shapes are unit-testable
+    without actually running netstat.
+
+    Windows:  TCP    1.2.3.4:8000   0.0.0.0:0   LISTENING   1234
+    Linux:    tcp 0 0 0.0.0.0:8000 0.0.0.0:*   LISTEN      1234/python
+    macOS:    tcp4 0 0 *.80        *.*          LISTEN      (no PID column)
+
+    A missing PID becomes the sentinel -1: evidence.py treats that as
+    "a listener exists but the process is unidentified", never as "dead".
+    """
+    out = {}
+    for line in (raw or "").splitlines():
+        parts = line.split()
+        if is_nt:
+            if not (len(parts) >= 5 and parts[0] in ("TCP", "TCPv6")
+                    and parts[3] == "LISTENING"):
+                continue
+            try:
+                port, pid = _port_from(parts[1]), int(parts[4])
+            except (ValueError, IndexError):
+                continue
+        else:
+            if not (len(parts) >= 4 and parts[0].startswith("tcp")
+                    and "LISTEN" in parts):
+                continue
+            try:
+                port = _port_from(parts[3])
+            except ValueError:
+                continue
+            pid = -1
+            for tok in parts[5:]:
+                head = tok.split("/", 1)[0]   # "1234/python" -> "1234"
+                if head.isdigit():
+                    pid = int(head)
+                    break
+        if ports is None or port in ports:
+            out.setdefault(port, set()).add(pid)
+    return out
+
+
 def _netstat_listeners(ports=None):
     """Parse `netstat -ano` (Windows) or `netstat -tlnp`/plain (POSIX)."""
-    if os.name == "nt":
+    is_nt = os.name == "nt"
+    if is_nt:
         cmd = ["netstat", "-ano"]
     else:
         cmd = ["netstat", "-tlnp"] if os.path.exists("/proc") else ["netstat", "-an"]
@@ -38,36 +89,7 @@ def _netstat_listeners(ports=None):
         ).stdout or ""
     except Exception:
         return {}
-    out = {}
-    for line in raw.splitlines():
-        parts = line.split()
-        # Windows: TCP  1.2.3.4:8000  0.0.0.0:0  LISTENING  1234
-        if os.name == "nt":
-            ok = len(parts) >= 5 and parts[0] == "TCP" and parts[3] == "LISTENING"
-            if ok:
-                try:
-                    port = int(parts[1].rsplit(":", 1)[-1])
-                    pid = int(parts[4])
-                except ValueError:
-                    continue
-                if ports is None or port in ports:
-                    out.setdefault(port, set()).add(pid)
-        else:
-            # Linux: tcp 0 0 0.0.0.0:8000 0.0.0.0:* LISTEN <pid/name or ->
-            ok = len(parts) >= 4 and parts[0] in ("tcp", "tcp6") and "LISTEN" in parts
-            if ok:
-                try:
-                    port = int(parts[3].rsplit(":", 1)[-1])
-                except ValueError:
-                    continue
-                pid = None
-                for tok in parts[6:]:
-                    if tok.isdigit():
-                        pid = int(tok)
-                        break
-                if ports is None or port in ports:
-                    out.setdefault(port, set()).add(pid if pid else -1)
-    return out
+    return _parse_netstat(raw, is_nt, ports)
 
 
 def listeners(ports=None):

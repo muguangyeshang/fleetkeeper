@@ -19,6 +19,11 @@ from . import proc
 LEVEL_NAME = {0: "L0_CONFIG", 1: "L1_PROCESS", 2: "L2_PORT",
               3: "L3_PROTOCOL", 4: "L4_BUSINESS"}
 
+# A probe must never let an upstream stream an unbounded body into memory.
+# Canaries that need to inspect JSON are capped at the same budget; if the
+# payload is truncated, json parsing fails loudly instead of guessing.
+MAX_PROBE_BYTES = 65536
+
 
 def tcp_probe(port, host="127.0.0.1", timeout=3.0):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -30,23 +35,29 @@ def tcp_probe(port, host="127.0.0.1", timeout=3.0):
 
 
 def http_probe(port, path="/", method="GET", host="127.0.0.1", timeout=5.0,
-               body=None, headers=None):
-    """{ok, status, reason, bytes, snippet, error}; ok=True means a status
-    line was received (even 4xx/5xx count as protocol-level liveness)."""
+               body=None, headers=None, max_bytes=MAX_PROBE_BYTES):
+    """{ok, status, reason, bytes, snippet, raw, error}; ok=True means a status
+    line was received (even 4xx/5xx count as protocol-level liveness).
+
+    `raw` is the bounded response body. Keeping it on the result means a
+    canary can inspect JSON from the SAME request -- no second round trip,
+    no chance of the two probes observing different states.
+    """
     from . import redact
     res = {"ok": False, "status": None, "reason": None,
-           "bytes": 0, "snippet": "", "error": None}
+           "bytes": 0, "snippet": "", "raw": b"", "error": None}
     conn = None
     try:
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
         conn.request(method, path, body=body, headers=headers or {})
         resp = conn.getresponse()
-        raw = resp.read(4096)
+        raw = resp.read(max_bytes)
         res.update({
             "ok": True,
             "status": resp.status,
             "reason": resp.reason,
             "bytes": len(raw),
+            "raw": raw,
             "snippet": redact.redact(raw.decode("utf-8", errors="replace"))[:200],
         })
     except Exception as e:
@@ -60,20 +71,15 @@ def http_probe(port, path="/", method="GET", host="127.0.0.1", timeout=5.0,
     return res
 
 
-def _read_full(port, path, timeout):
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-    try:
-        conn.request("GET", path)
-        return conn.getresponse().read().decode("utf-8", errors="replace")
-    finally:
-        conn.close()
-
-
-def check_canary(canary, timeout=8.0):
+def check_canary(canary, timeout=8.0, default_port=None, max_bytes=MAX_PROBE_BYTES):
     """Minimal canary executor (type "http" for now).
 
+    `default_port` is the service's registry port: a canary normally lives on
+    the same host/port as its service, so forcing every config to repeat the
+    port invites an omission that silently pins the ladder at L3.
+
     Example:
-      {"type": "http", "port": 8080, "path": "/v1/models",
+      {"type": "http", "path": "/v1/models",
        "expect": {"status": 200, "json_path": "data", "min_items": 1}}
     """
     if not canary:
@@ -82,11 +88,20 @@ def check_canary(canary, timeout=8.0):
     if ctype != "http":
         return {"configured": True, "passed": None,
                 "detail": "unsupported canary type: {}".format(ctype)}
-    p = http_probe(canary.get("port"), canary.get("path", "/"),
-                   method=canary.get("method", "GET"), timeout=timeout)
+
+    port = canary.get("port") or default_port
+    if port is None:
+        return {"configured": True, "passed": False,
+                "detail": "canary declares no port and service declares none"}
+
+    p = http_probe(port, canary.get("path", "/"),
+                   method=canary.get("method", "GET"),
+                   host=canary.get("host", "127.0.0.1"),
+                   timeout=timeout, max_bytes=max_bytes)
     if not p["ok"]:
         return {"configured": True, "passed": False,
                 "detail": "canary request failed: {}".format(p["error"])}
+
     expect = canary.get("expect") or {}
     ok = True
     detail = "HTTP {}".format(p["status"])
@@ -99,11 +114,17 @@ def check_canary(canary, timeout=8.0):
     if "json_path" in expect:
         import json
         try:
-            payload = json.loads(_read_full(canary.get("port"),
-                                            canary.get("path", "/"), timeout))
+            # Reuse the bounded body from the probe above: one request per
+            # canary, and bytes are capped so a huge response cannot OOM us.
+            payload = json.loads(p["raw"].decode("utf-8", errors="replace"))
             cur = payload
             for key in str(expect["json_path"]).split("."):
-                cur = cur[int(key)] if key.isdigit() else cur.get(key)
+                if isinstance(cur, list) and key.isdigit():
+                    cur = cur[int(key)]
+                elif isinstance(cur, dict):
+                    cur = cur.get(key)
+                else:
+                    cur = None
                 if cur is None:
                     break
             n = len(cur) if isinstance(cur, (list, dict)) else (1 if cur is not None else 0)
@@ -124,7 +145,7 @@ def canary_is_protocol_only(svc):
     canary = svc.get("canary") or {}
     health = svc.get("health") or {}
     return (canary.get("type") == "http"
-            and canary.get("port", svc.get("port")) == svc.get("port")
+            and (canary.get("port") or svc.get("port")) == svc.get("port")
             and canary.get("path", "/") == health.get("path", "/")
             and canary.get("method", "GET").upper() == health.get("method", "GET").upper())
 
@@ -141,21 +162,26 @@ def evaluate_service(svc):
         return out
 
     owners = proc.find_listener(port)
-    pids = [o["pid"] for o in owners if o.get("pid") and o["pid"] > 0]
-    out["pids"] = pids
+    # On systems where netstat cannot expose PIDs, find_listener reports a
+    # sentinel (-1). That is still proof a listener exists; treating it as
+    # "no process" would make the whole ladder collapse to L0 on POSIX.
+    pids = [o["pid"] for o in owners if o.get("pid")]
+    real_pids = [p for p in pids if isinstance(p, int) and p > 0]
+    out["pids"] = real_pids
     out["cmdlines"] = [(o.get("cmdline") or "")[:120] for o in owners]
 
     if not pids:
         out["issues"].append("no process listening")
         return out
     out["level"] = 1
-    out["evidence"].append("PID {} listening on :{}".format(",".join(map(str, pids)), port))
+    if real_pids:
+        out["evidence"].append("PID {} listening on :{}".format(
+            ",".join(map(str, real_pids)), port))
+    else:
+        out["evidence"].append("listener on :{} (PID unavailable from netstat)".format(port))
 
-    # When psutil is missing, netstat-only output cannot verify liveness; on
-    # POSIX netstat -p may print process names instead of PIDs. Treat "the
-    # port responds to TCP" as the next rung rather than failing here.
-    if len(pids) > 1:
-        out["issues"].append("{} processes listening simultaneously (duplicate instance)".format(len(pids)))
+    if len(real_pids) > 1:
+        out["issues"].append("{} processes listening simultaneously (duplicate instance)".format(len(real_pids)))
 
     if not tcp_probe(port):
         out["issues"].append("TCP connect failed (port occupied but zombie)")
@@ -181,7 +207,7 @@ def evaluate_service(svc):
         canary = {"configured": True, "passed": None, "proof": "protocol_only",
                   "detail": "same endpoint as health check; proves protocol only"}
     else:
-        canary = check_canary(svc.get("canary"))
+        canary = check_canary(svc.get("canary"), default_port=port)
     out["canary"] = canary
     if canary.get("passed") is True:
         out["level"] = 4

@@ -4,8 +4,8 @@
     fleetkeeper status [SERVICE] [--json]     evidence ladder per service
     fleetkeeper doctor [--json]               fleet-wide diagnosis
     fleetkeeper heartbeat SERVICE             write one heartbeat
-    fleetkeeper sweep CONFIG                  run one watchdog sweep (cron entry)
-    fleetkeeper watch CONFIG [--interval S]   run sweeps in a loop
+    fleetkeeper --config FILE sweep          run one watchdog sweep (cron entry)
+    fleetkeeper --config FILE watch [--interval S]   run sweeps in a loop
     fleetkeeper logs SERVICE [--tail N]       show logs, redacted by default
 """
 import argparse
@@ -33,9 +33,18 @@ def _resolve_service(cfg, token):
 
 
 def _registry(cfg):
+    """Merge registry.defaults into every service (service keys win).
+
+    Without this merge a config that declares e.g. a global heartbeat_period
+    looks authoritative but is silently ignored -- the worst kind of bug:
+    the config lies and nothing complains.
+    """
+    reg = cfg.get("registry") or {}
+    defaults = dict(reg.get("defaults") or {})
     out = {}
-    for key, svc in ((cfg.get("registry") or {}).get("services") or {}).items():
-        item = dict(svc)
+    for key, svc in (reg.get("services") or {}).items():
+        item = dict(defaults)
+        item.update(svc)
         item["key"] = key
         item.setdefault("name", key)
         out[key] = item
@@ -56,7 +65,7 @@ def cmd_status(args):
     for key, svc in svcs.items():
         ev = evidence.evaluate_service(svc)
         hb = heartbeat.evaluate(key, int(svc.get("heartbeat_period") or 60),
-                                directory=_hb_dir(cfg))
+                                directory=_hb_dir(cfg, args.config_path))
         rows.append({"key": key, "name": svc["name"], "port": svc.get("port"),
                      "level": ev["level_name"], "pids": ev.get("pids", []),
                      "heartbeat": hb["status"], "hb_age": hb.get("age_seconds"),
@@ -91,7 +100,7 @@ def cmd_doctor(args):
     for key, svc in svcs.items():
         ev = evidence.evaluate_service(svc)
         hb = heartbeat.evaluate(key, int(svc.get("heartbeat_period") or 60),
-                                directory=_hb_dir(cfg))
+                                directory=_hb_dir(cfg, args.config_path))
         item = {"service": svc["name"], "port": svc.get("port"),
                 "level": ev["level_name"], "issues": ev["issues"],
                 "heartbeat": hb, "recovery": svc.get("recovery")}
@@ -145,7 +154,7 @@ def cmd_heartbeat(args):
         return 2
     path = heartbeat.write(key, processed=args.processed, ok=not args.fail,
                            extra={"proof": args.proof or "business"},
-                           directory=_hb_dir(cfg))
+                           directory=_hb_dir(cfg, args.config_path))
     print("heartbeat written: {} (proof={})".format(path, args.proof or "business"))
     return 0
 
@@ -212,10 +221,15 @@ def cmd_logs(args):
     return 0
 
 
-def _hb_dir(cfg):
-    base = os.path.dirname(os.path.abspath(getattr(_load, "_path", "")) or ".")
+def _hb_dir(cfg, config_path):
+    """Resolve heartbeat_dir relative to the config file, not the CWD.
+
+    Explicit parameter instead of a function attribute: module-level mutable
+    state leaks between two configs in the same process (and between tests).
+    """
+    base = os.path.dirname(os.path.abspath(config_path))
     d = (cfg.get("heartbeat_dir") or "runtime/heartbeat")
-    return d if os.path.isabs(d) else os.path.join(base or ".", d)
+    return d if os.path.isabs(d) else os.path.join(base, d)
 
 
 def build_parser():
@@ -266,8 +280,8 @@ def main(argv=None):
     if not getattr(args, "func", None):
         parser.print_help()
         return 1
-    # remember the config path for relative resolution inside helpers
-    _load._path = os.path.abspath(args.config)
+    # pass the resolved config path explicitly; no module-level mutable state
+    args.config_path = os.path.abspath(args.config)
     try:
         return args.func(args)
     except FileNotFoundError as e:
