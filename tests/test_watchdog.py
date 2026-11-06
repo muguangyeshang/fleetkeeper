@@ -245,4 +245,33 @@ def monkeypatch_tcp(W, ok, monkeypatch=None):
         W._tcp_ok = lambda port, timeout=3.0: ok
 
 
+def test_sweep_records_the_affected_service_for_filtering(tmp_path, net_up, monkeypatch):
+    """Without the port->name mapping every timeline row said 'fleet' and
+    `history --service` could never match anything."""
+    from fleetkeeper import history
+    dead = _free_port()
+    cfg, _ = _write_cfg(tmp_path, {"gw": _make_service(dead, name="Dead Gateway")})
+    monkeypatch_listeners(W, {}, monkeypatch)
+    monkeypatch_tcp(W, False, monkeypatch)
+    s = W.run(cfg)
+    assert s["affected_services"] == [{"name": "Dead Gateway", "port": dead}]
+    rows = history.query(s["history_file"], service="Dead Gateway")
+    assert rows
+    assert rows[0]["service"] == "Dead Gateway"
+    assert rows[0]["port"] == dead
+    assert history.query(s["history_file"], service="Not A Service") == []
+
+
+def test_empty_net_probe_targets_disables_the_gate(tmp_path, monkeypatch):
+    """A fresh install has no probe targets. That must mean 'gate off', not
+    'WAN down forever' -- otherwise healing is suspended on every new host."""
+    assert W.net_gate([], 0.2) is True
+    cfg, _ = _write_cfg(tmp_path, {"gw": _make_service(_free_port())},
+                        extra_watchdog={"net_probe_targets": []})
+    monkeypatch_listeners(W, {}, monkeypatch)
+    monkeypatch_tcp(W, False, monkeypatch)
+    s = W.run(cfg)
+    assert s["network_down"] is False
+
+
 import time  # noqa: E402  (used by clock-skew test)

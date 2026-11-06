@@ -5,11 +5,20 @@
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 ![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)
 
-**Evidence-based guardian for a fleet of local AI services.**
-Pure standard library. Zero dependencies. Windows-first, Linux supported. On
-hosts where `netstat` exposes no PID (macOS, hardened containers) the ladder
-degrades to port-level evidence and says so explicitly — it never claims
-"healthy" on a proof it did not collect.
+**A self-healing watchdog for local AI services, with the safety switches the
+usual ones don't have.** WAN down ⇒ record and *never* heal; per-port cooldowns
+instead of a global one; pause markers so an operator's "intentionally offline"
+is not an incident; PID-validated process ops instead of kill-by-name; and no
+auto-claim that a service works just because its port answers.
+
+Pure standard library, zero dependencies. Windows-first, Linux supported.
+One sweep is one cron entry.
+
+```bash
+fleetkeeper --config fleet.json doctor --html status.html   # offline page, open it in a browser
+fleetkeeper --config fleet.json history --last 24h          # what healed itself at 4am
+fleetkeeper --config fleet.json sweep                       # cron entry: detect, gate, heal, alert
+```
 
 The CI badge goes live after the repository is pushed to GitHub.
 
@@ -19,6 +28,7 @@ The CI badge goes live after the repository is pushed to GitHub.
 - [Why this exists](#why-this-exists)
 - [The evidence ladder](#the-evidence-ladder)
 - [Quick start](#quick-start)
+- [Alerts, history and the status page](#alerts-history-and-the-status-page)
 - [Config](#config)
 - [Platform notes](#platform-notes)
 - [CLI](#cli)
@@ -87,7 +97,10 @@ production homelab running 40+ guarded services:
 | Alert storm suppression | `watchdog.py` | first alert at threshold N, re-alert at fixed intervals, one alert on recovery |
 | Atomic writes + edit leases | `safeio.py` | concurrent writers coordinate or fail loudly; a lease keeps its baseline hash across renewal |
 | PID-only process ops | `proc.py` | no kill-by-name API exists; PID ops validate the command line first |
-| Secret redaction | `redact.py` | logs and config writes are scanned; hits are counted, never echoed |
+| Secret redaction | `redact.py` | logs, outbound alerts and config writes are scanned; hits are counted, never echoed |
+| Outbound alert fan-out | `notify.py` | webhook + command + file; a broken channel never breaks a sweep; payloads are JSON on stdin, not shell arguments |
+| Append-only timeline | `history.py` | `state.json` is a snapshot; sqlite keeps every sweep and alert so an incident can be reconstructed |
+| Offline status page | `report.py` | one self-contained HTML file, no CDN/JS/fonts, escapes all config-derived text |
 
 ## The evidence ladder
 
@@ -111,18 +124,32 @@ fleetkeeper refuses to pretend otherwise.
 ## Quick start
 
 ```bash
-# 1. copy the example config and point it at your services
-cp config/fleet.example.json config/fleet.json
+# 1. create a config (no checkout needed -- `init` works from a wheel install)
+fleetkeeper init --config fleet.json --port 8080
 
-# 2. see the whole fleet with evidence levels
+# 2. see the whole fleet with evidence levels (text, JSON, or an offline HTML page)
 python -m fleetkeeper.cli --config config/fleet.json doctor
+python -m fleetkeeper.cli --config config/fleet.json doctor --html status.html
 
 # 3. run one watchdog sweep (this is your cron entry)
 python -m fleetkeeper.cli --config config/fleet.json sweep
 
-# or run it in a loop
+# 4. look back at what happened
+python -m fleetkeeper.cli --config config/fleet.json history --last 24h
+
+# or run sweeps in a loop
 python -m fleetkeeper.cli --config config/fleet.json watch --interval 60
 ```
+
+`init` writes one placeholder service on `--port`; edit
+`registry.services` to point it at your real ports. `net_probe_targets` is
+empty in the template, which means the network gate is **off** — add probe
+hosts to enable it. Re-running `init` refuses to overwrite unless `--force`
+is given.
+
+`--config` works either before or after the subcommand:
+`fleetkeeper --config fleet.json doctor` and
+`fleetkeeper doctor --config fleet.json` are equivalent.
 
 ### Wiring a service into heartbeats (one line)
 
@@ -149,6 +176,82 @@ Args    : -m fleetkeeper.cli --config C:\path\config\fleet.json sweep
 
 On Linux/macOS: `* * * * * cd /path && python -m fleetkeeper.cli --config config/fleet.json sweep`
 
+## Alerts, history and the status page
+
+Three things were missing from a plain port watchdog: getting told, seeing the
+fleet at a glance, and answering "what happened overnight". All three are
+standard-library only and default to **off** (an existing config behaves
+exactly as before).
+
+**Get told.** Add to the `watchdog` block:
+
+```jsonc
+"alert_log": "runtime/alerts.log",          // file channel (always on)
+"alert_command": null,                       // legacy alias for a command
+"history_file": "runtime/history.sqlite3",
+"notify": {
+  "channels": ["webhook", "command"],
+  "webhook_url": "http://127.0.0.1:9100/hook",
+  "webhook_timeout": 3.0,
+  "command": ["python", "hook_command.py"],   // list or string; receives JSON on stdin
+  "command_timeout": 10.0
+}
+```
+
+A minimal receiver to verify the webhook end to end:
+
+```python
+# hook_receiver.py  ->  python hook_receiver.py
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        print(json.loads(body))          # {title, level, message, issues, healed, ts, ...}
+        self.send_response(200); self.end_headers()
+    def log_message(self, *a): pass
+
+HTTPServer(("127.0.0.1", 9100), H).serve_forever()
+```
+
+```python
+# hook_command.py  (receives the same JSON on stdin, not on the command line)
+import sys, json
+print(json.load(sys.stdin))
+```
+
+`sweep` prints `notify[abnormal(x2)]: webhook=ok HTTP 200` — that line is the
+success criterion. Fields named `api_key` / `token` / `password` / `secret`
+and any key-like text in a message are replaced with `[REDACTED]` before the
+payload leaves the host; webhook URLs are stripped out of error messages. A
+dead channel yields `error ...` and the sweep still heals normally.
+
+**See the fleet.** `status --html status.html` / `doctor --html status.html`
+write one self-contained file: inline CSS, dark/light via
+`prefers-color-scheme`, responsive cards, a five-rung evidence bar per service,
+and P0 / coverage-gap badges. No CDN, no JS, no external fonts, no network
+calls — it opens by double-clicking on an offline host. `--html` with no path
+prints the document to stdout for piping. Config-derived names are HTML-escaped.
+
+**Answer "what happened at 4am".** Every sweep and every alert is appended to
+`runtime/history.sqlite3`. Retention defaults to 30 days; set
+`history_retention_days` in the `watchdog` block to change it (`0` keeps
+everything). `state.json` remains a snapshot; the timeline never overwrites.
+
+```bash
+fleetkeeper --config fleet.json history --last 24h
+fleetkeeper --config fleet.json history --last 7d --kind alert --json
+fleetkeeper --config fleet.json history --last all --service "LLM Gateway"
+```
+
+Accepted windows: `90s`, `30m`, `24h`, `7d`, `all`; a bare number means hours.
+Timestamps carry milliseconds so several sweeps in the same second stay
+ordered. Each row names the affected service(s) — resolved from the port in
+the issue line back to `registry.services` — so `--service` really filters
+(and a multi-service incident still matches any one of its members). The same
+service/port pair is included in webhook and command payloads.
+
 ## Config
 
 ```jsonc
@@ -173,7 +276,14 @@ On Linux/macOS: `* * * * * cd /path && python -m fleetkeeper.cli --config config
     "heal_cooldown_seconds": 180,    // PER PORT
     "net_probe_targets": [["1.1.1.1", 443]],
     "pause_gates": { "gateway": { "ports": [8080], "marker_file": "PAUSE_GW" } },
-    "alert_log": "runtime/alerts.log"
+    "alert_log": "runtime/alerts.log",
+    "history_file": "runtime/history.sqlite3",
+    "history_retention_days": 30,
+    "notify": {
+      "channels": ["webhook", "command"],
+      "webhook_url": null,             // null = channel disabled
+      "command": null                  // legacy alias: "alert_command"
+    }
   }
 }
 ```
@@ -187,8 +297,12 @@ Notes that matter in practice:
   `json_path` inspects the **same** response — one request per canary, not two.
 - `expect` supports `status`, `min_bytes`, and `json_path` + `min_items`.
 - `registry.defaults` is merged into each service; service-level keys win.
-  `heartbeat_dir`, `state_file`, `alert_log` and `pause_gates.marker_file`
-  resolve relative to the config file, not the current working directory.
+  `heartbeat_dir`, `state_file`, `alert_log`, `history_file` and
+  `pause_gates.marker_file` resolve relative to the config file, not the
+  current working directory.
+- `notify` is optional. With no `webhook_url` and no `command`, `sweep` behaves
+  exactly like 0.1.1 (file log only). See
+  [Alerts, history and the status page](#alerts-history-and-the-status-page).
 
 ## Platform notes
 
@@ -207,13 +321,18 @@ collapse the ladder to L0. If `netstat` is absent entirely, install `psutil`
 ## CLI
 
 ```
-fleetkeeper status [SERVICE] [--json]    evidence ladder per service
-fleetkeeper doctor [--json]              fleet-wide diagnosis (P0 vs uncovered)
-fleetkeeper heartbeat SERVICE [--fail]   write one heartbeat manually
-fleetkeeper sweep [--json]               one watchdog sweep (cron entry)
-fleetkeeper watch [--interval S]         sweeps in a loop
-fleetkeeper logs SERVICE [--tail N]      service logs, redacted by default
+fleetkeeper init [--config FILE] [--port N] [--force]   write a runnable config
+fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
+fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis (P0 vs uncovered)
+fleetkeeper heartbeat SERVICE [--fail] [--proof ...]    write one heartbeat manually
+fleetkeeper sweep [--json]                              one watchdog sweep (cron entry)
+fleetkeeper watch [--interval S]                        sweeps in a loop
+fleetkeeper history [--last 24h] [--kind alert] [--json]  incident timeline
+fleetkeeper logs SERVICE [--tail N] [--raw]             service logs, redacted by default
 ```
+
+`--html` with no filename writes the document to stdout. `--json` and
+`--html` are mutually exclusive.
 
 ## What it deliberately does not do
 
@@ -227,11 +346,14 @@ fleetkeeper logs SERVICE [--tail N]      service logs, redacted by default
 
 ## Tested
 
-51 pytest tests, including a fake live fleet over real HTTP sockets:
+88 pytest tests, including a fake live fleet over real HTTP sockets, a real
+local webhook receiver and a real subprocess command hook:
 cooldown persistence across green sweeps, duplicate-instance handling,
 network-down suspension, pause gates, alert storm suppression, clock-skew
 poisoning, lease renewal keeping its baseline, redaction of keys/JWTs/
-private-key markers, and end-to-end CLI runs.
+private-key markers (including field-name-based masking in structured
+payloads), HTML escaping of config-derived names, timeline retention, and
+end-to-end CLI runs.
 
 Ten regression tests (`test_regressions.py`) lock the four review findings:
 README-example canary reaching L4, bounded body reads, one request per

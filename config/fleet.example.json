@@ -34,6 +34,15 @@
       "local-llm": { "ports": [1234], "marker_file": "PAUSE_LLM" }
     },
     "alert_log": "runtime/alerts.log",
-    "alert_command": null
+    "alert_command": null,
+    "history_file": "runtime/history.sqlite3",
+    "history_retention_days": 30,
+    "notify": {
+      "channels": ["webhook", "command"],
+      "webhook_url": null,
+      "webhook_timeout": 3.0,
+      "command": null,
+      "command_timeout": 10.0
+    }
   }
 }

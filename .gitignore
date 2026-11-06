@@ -5,6 +5,8 @@ __pycache__/
 build/
 dist/
 runtime/
+# local fleet config created by `fleetkeeper init`
+config/fleet.json
 *.err.log
 *.bak_*
 PAUSE_LLM

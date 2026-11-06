@@ -87,3 +87,103 @@ def test_status_human(fake_fleet, capsys):
     out = capsys.readouterr().out
     assert "EVIDENCE" in out
     assert "L5" in out  # evidence-boundary note present
+
+
+def test_status_html_to_stdout(fake_fleet, capsys):
+    rc = cli.main(["--config", fake_fleet, "status", "--html"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.lstrip().lower().startswith("<!doctype html>")
+    assert "<style>" in out
+    assert "<script" not in out.lower()
+
+
+def test_doctor_html_writes_a_file(fake_fleet, tmp_path, capsys):
+    dest = str(tmp_path / "status.html")
+    rc = cli.main(["--config", fake_fleet, "doctor", "--html", dest])
+    assert rc == 0
+    assert "wrote" in capsys.readouterr().err
+    text = (tmp_path / "status.html").read_text(encoding="utf-8")
+    assert text.lstrip().lower().startswith("<!doctype html>")
+    assert "http://" not in text and "<script" not in text.lower()
+
+
+def test_json_and_html_are_mutually_exclusive(fake_fleet):
+    with pytest.raises(SystemExit):
+        cli.main(["--config", fake_fleet, "status", "--json", "--html"])
+
+
+def test_history_empty_then_populated(fake_fleet, capsys, monkeypatch):
+    import fleetkeeper.watchdog as W
+    monkeypatch.setattr(W.proc, "listeners", lambda ports=None: {})
+    rc = cli.main(["--config", fake_fleet, "history", "--last", "all", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+    assert cli.main(["--config", fake_fleet, "sweep", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert "history_file" in summary
+    assert "notify" in summary
+
+    assert cli.main(["--config", fake_fleet, "history", "--last", "all", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) >= 1
+    assert rows[0]["kind"] == "sweep"
+
+
+def test_history_bad_window_is_a_usage_error(fake_fleet, capsys):
+    rc = cli.main(["--config", fake_fleet, "history", "--last", "yesterday"])
+    assert rc == 2
+    assert "invalid --last" in capsys.readouterr().out
+
+
+def test_init_creates_a_runnable_config(tmp_path, capsys):
+    target = tmp_path / "fleet.json"
+    rc = cli.main(["init", "--config", str(target), "--port", "59123"])
+    assert rc == 0
+    assert "wrote" in capsys.readouterr().out
+    cfg = json.loads(target.read_text(encoding="utf-8"))
+    assert cfg["registry"]["services"]["example"]["port"] == 59123
+    assert cfg["watchdog"]["net_probe_targets"] == []   # gate off by default
+    assert cfg["watchdog"]["history_retention_days"] == 30
+    # and the generated file is immediately usable by the other commands
+    assert cli.main(["status", "--config", str(target), "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["port"] == 59123
+
+
+def test_init_never_clobbers_without_force(tmp_path, capsys):
+    target = tmp_path / "fleet.json"
+    assert cli.main(["init", "--config", str(target)]) == 0
+    before = target.read_text(encoding="utf-8")
+    assert cli.main(["init", "--config", str(target)]) == 1
+    assert "nothing changed" in capsys.readouterr().out
+    assert target.read_text(encoding="utf-8") == before
+    assert cli.main(["init", "--config", str(target), "--force"]) == 0
+
+
+def test_config_works_before_and_after_subcommand(tmp_path):
+    target = tmp_path / "fleet.json"
+    assert cli.main(["--config", str(target), "init"]) == 0
+    assert cli.main(["--config", str(target), "status", "--json"]) == 0
+    assert cli.main(["status", "--config", str(target), "--json"]) == 0
+    assert cli.main(["doctor", "--config", str(target), "--json"]) == 0
+
+
+def test_missing_config_points_at_init_command(tmp_path, capsys):
+    rc = cli.main(["--config", str(tmp_path / "nope.json"), "doctor"])
+    assert rc == 2
+    assert "fleetkeeper init" in capsys.readouterr().out
+
+
+def test_builtin_template_matches_repo_example_keys():
+    import os
+    from fleetkeeper import template
+    example = os.path.join(os.path.dirname(__file__), "..", "config", "fleet.example.json")
+    with open(example, encoding="utf-8") as f:
+        shipped = json.load(f)
+    builtin = template.default_config()
+    assert set(builtin) == set(shipped)
+    assert set(builtin["watchdog"]) == set(shipped["watchdog"])
+    assert set(builtin["watchdog"]["notify"]) == set(shipped["watchdog"]["notify"])
+    assert set(builtin["registry"]["services"]) != set()

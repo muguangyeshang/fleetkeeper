@@ -6,6 +6,32 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `fleetkeeper init`: a wheel install now produces a runnable `fleet.json` in
+  one command. Previously the README told users to copy a file that only
+  exists in a repository checkout. `--port`, `--force`, and refusal to clobber
+  an existing config are included.
+- `--config` is accepted both before and after the subcommand.
+- `notify.py`: outbound alert fan-out — webhook (stdlib `urllib`) and command
+  (JSON on stdin), plus the existing file channel. Payloads are redacted by
+  both content and field name; webhook URLs are stripped from error strings;
+  a failing channel is isolated from the healing path. `alert_command` is no
+  longer a dead config key.
+- `history.py`: append-only sqlite event stream (`sweep` + `alert` rows),
+  30-day retention configurable via `watchdog.history_retention_days`, and a
+  `history` CLI command with `--last 24h|30m|7d|90s|all`, `--kind`,
+  `--service`, `--limit`, `--json`.
+- `report.py`: `status --html` / `doctor --html` produce one self-contained
+  offline HTML page (inline CSS, light/dark, responsive, five-rung evidence
+  bar, P0 badges). No JS, CDN, fonts or images; all config text is escaped.
+- `README.md`: lead with the self-heal safety semantics instead of the
+  evidence ladder, and document the three commands a new user actually needs.
+- `template.py`: built-in config template so the console command is
+  self-sufficient; covered by a test that keeps its keys in sync with the
+  shipped `config/fleet.example.json`.
+- 37 new tests (88 total), stable across three consecutive runs: real local
+  webhook receiver, real subprocess command hook, XSS escaping, timeline
+  retention, P0 badges after JSON round-trip, CLI html/history/init paths.
+- Config-not-found errors now point at `fleetkeeper init`.
 - Add CI matrix (3 operating systems, Python 3.8–3.13) and a tag-triggered
   publish workflow with PyPI Trusted Publishing and draft releases.
 - Add `CONTRIBUTING.md`, `SECURITY.md`, `RELEASING.md`, issue templates and an
@@ -14,6 +40,20 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 - `pyproject.toml`: declare supported Python versions as classifiers.
 - `README.md`: badges, table of contents, changelog links to this file instead
   of a second inline copy.
+
+### Bug Fixes
+- A full user journey from a clean wheel install found and fixed five more
+  first-run problems (see Improvements above for `init` and `--config`):
+  timeline rows now carry the real service name and port instead of `fleet`,
+  `--service` matches any member of a multi-service incident, timestamps show
+  milliseconds so same-second sweeps stay ordered, and `sweep` no longer
+  prints the DB path on every cron run.
+- `net_gate([])` returned `False`, so a config with no probe targets was read
+  as "WAN unreachable" and healing stayed suspended forever. An empty list now
+  means the network gate is disabled; `init` generates one.
+- CLI `--help` still described the project as an "evidence-based guardian";
+  it now states the self-heal safety positioning used by the README and
+  package metadata.
 
 ## 0.1.1 - 2026-11-06
 

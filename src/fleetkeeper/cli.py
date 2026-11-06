@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """fleetkeeper CLI.
 
-    fleetkeeper status [SERVICE] [--json]     evidence ladder per service
-    fleetkeeper doctor [--json]               fleet-wide diagnosis
-    fleetkeeper heartbeat SERVICE             write one heartbeat
-    fleetkeeper --config FILE sweep          run one watchdog sweep (cron entry)
-    fleetkeeper --config FILE watch [--interval S]   run sweeps in a loop
-    fleetkeeper logs SERVICE [--tail N]       show logs, redacted by default
+    fleetkeeper init [--config FILE] [--port N]          write a runnable config
+    fleetkeeper status [SERVICE] [--json | --html FILE]  evidence ladder
+    fleetkeeper doctor [--json | --html FILE]            fleet-wide diagnosis
+    fleetkeeper heartbeat SERVICE                        write one heartbeat
+    fleetkeeper sweep                                    one watchdog sweep (cron)
+    fleetkeeper watch [--interval S]                     run sweeps in a loop
+    fleetkeeper history [--last 24h] [--json]            incident timeline
+    fleetkeeper logs SERVICE [--tail N]                  logs, redacted by default
+
+    --config is accepted before or after the subcommand.
 """
 import argparse
 import json
@@ -14,12 +18,25 @@ import os
 import sys
 import time
 
-from . import evidence, heartbeat, proc, redact, watchdog
+from . import evidence, heartbeat, history, proc, redact, safeio, template, watchdog
+from . import report as report_mod  # cmd_doctor has a local variable named `report`
 
 
 def _load(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _emit_html(text, dest):
+    """'-' means stdout (for piping); a real path is written atomically so a
+    concurrently-opened status page never sees a half-written document."""
+    if not dest:
+        return
+    if dest == "-":
+        sys.stdout.write(text)
+        return
+    safeio.atomic_write_text(dest, text)
+    print("wrote {}".format(os.path.abspath(dest)), file=sys.stderr)
 
 
 def _resolve_service(cfg, token):
@@ -71,6 +88,9 @@ def cmd_status(args):
                      "heartbeat": hb["status"], "hb_age": hb.get("age_seconds"),
                      "evidence": ev["evidence"], "issues": ev["issues"]})
 
+    if args.html:
+        _emit_html(report_mod.render(rows), args.html)
+        return 0
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
@@ -110,6 +130,9 @@ def cmd_doctor(args):
         elif hb["status"] in ("NO_HEARTBEAT", "ALIVE_ONLY", "PROTOCOL_ONLY"):
             report["uncovered"].append(item)
 
+    if args.html:
+        _emit_html(report_mod.render(report), args.html)
+        return 0
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
@@ -172,6 +195,15 @@ def cmd_sweep(args):
             print("healed: {}".format(h))
         for a in summary["alerts"]:
             print("alert: {}".format(a))
+        for n in summary.get("notify") or []:
+            channels = n.get("channels") or {}
+            print("notify[{}]: {}".format(
+                n.get("title"), ", ".join("{}={}".format(k, v) for k, v in channels.items())
+                or "no outbound channel configured"))
+        if summary.get("notify_error"):
+            print("notify error: {}".format(summary["notify_error"]))
+        # The DB path stays in --json only: printing it on every cron run is
+        # pure noise in a scheduler log.
         if not summary["issues"] and not summary["network_down"]:
             print("fleet healthy")
     return 0
@@ -190,6 +222,60 @@ def cmd_watch(args):
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
+
+
+def cmd_history(args):
+    cfg = _load(args.config)
+    wcfg = cfg.get("watchdog") or {}
+    db = history.db_path_for(os.path.dirname(args.config_path), wcfg)
+    try:
+        since = history.parse_since(args.last)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    rows = history.query(db, since=since, service=args.service,
+                         kind=args.kind, limit=args.limit)
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print("no events in window '{}'  (db: {})".format(args.last, db))
+        print("run 'fleetkeeper --config FILE sweep' first to record one")
+        return 0
+    def _stamp(row):
+        # Second-resolution timestamps collapse several sweeps into one
+        # identical line; milliseconds make the ordering visible.
+        ts = float(row["ts"] or 0)
+        return (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                + ".{:03d}".format(int(ts * 1000) % 1000))
+
+    print("{:<23} {:<7} {:<9} {:<24} {:<6} {}".format(
+        "TIME", "KIND", "LEVEL", "SERVICE", "ISSUES", "MESSAGE"))
+    for r in rows:
+        print("{:<23} {:<7} {:<9} {:<24} {:<6} {}".format(
+            _stamp(r), r["kind"], r["level"] or "-",
+            (r["service"] or "fleet")[:24],
+            len(r["issues"]), (r["message"] or "")[:60]))
+    print()
+    print("{} event(s) shown; total in db: {}. '--last all' shows everything.".format(
+        len(rows), history.count(db)))
+    return 0
+
+
+def cmd_init(args):
+    """Create a runnable config without needing a repository checkout."""
+    path = os.path.abspath(args.config)
+    if os.path.exists(path) and not args.force:
+        print("{} already exists; nothing changed. Use --force to overwrite.".format(path))
+        return 1
+    cfg = template.default_config(port=args.port)
+    safeio.atomic_write_text(path, template.render(cfg))
+    print("wrote {}".format(path))
+    print("edit registry.services (currently one placeholder on :{}), then:".format(args.port))
+    print("  fleetkeeper --config {} doctor --html status.html".format(args.config))
+    print("  fleetkeeper --config {} sweep".format(args.config))
+    print("net_probe_targets is empty = network gate off; add hosts to enable it.")
+    return 0
 
 
 def cmd_logs(args):
@@ -233,23 +319,46 @@ def _hb_dir(cfg, config_path):
 
 
 def build_parser():
+    # --config is accepted BOTH before and after the subcommand. Two separate
+    # Action objects are required: argparse's `parents=` shares ONE Action
+    # instance, and set_defaults() on the parent would then rewrite the
+    # child's SUPPRESS default, silently discarding a leading --config.
+    child = argparse.ArgumentParser(add_help=False)
+    child.add_argument("--config", default=argparse.SUPPRESS,
+                       help="fleet config JSON (default: config/fleet.json)")
+
     p = argparse.ArgumentParser(
         prog="fleetkeeper",
-        description="Evidence-based guardian for a fleet of local AI services.")
+        description="Self-healing watchdog for local AI service fleets: "
+                    "network-gated healing, evidence ladder, alerts, timeline.")
     p.add_argument("--config", default="config/fleet.json",
                    help="fleet config JSON (default: config/fleet.json)")
     sub = p.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("status", help="evidence ladder per service")
+    ini = sub.add_parser("init", parents=[child],
+                         help="write a runnable config template")
+    ini.add_argument("--port", type=int, default=template.DEFAULT_PORT,
+                     help="placeholder service port (default: 8080)")
+    ini.add_argument("--force", action="store_true",
+                     help="overwrite an existing config file")
+    ini.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("status", parents=[child], help="evidence ladder per service")
     s.add_argument("service", nargs="?")
-    s.add_argument("--json", action="store_true")
+    out = s.add_mutually_exclusive_group()
+    out.add_argument("--json", action="store_true")
+    out.add_argument("--html", nargs="?", const="-", metavar="FILE",
+                     help="write a self-contained status page; '-' prints to stdout")
     s.set_defaults(func=cmd_status)
 
-    d = sub.add_parser("doctor", help="fleet-wide diagnosis")
-    d.add_argument("--json", action="store_true")
+    d = sub.add_parser("doctor", parents=[child], help="fleet-wide diagnosis")
+    dout = d.add_mutually_exclusive_group()
+    dout.add_argument("--json", action="store_true")
+    dout.add_argument("--html", nargs="?", const="-", metavar="FILE",
+                      help="write a self-contained diagnosis page; '-' prints to stdout")
     d.set_defaults(func=cmd_doctor)
 
-    h = sub.add_parser("heartbeat", help="write one heartbeat")
+    h = sub.add_parser("heartbeat", parents=[child], help="write one heartbeat")
     h.add_argument("service")
     h.add_argument("--processed", type=int, default=None)
     h.add_argument("--fail", action="store_true")
@@ -257,15 +366,27 @@ def build_parser():
                    choices=["business", "process_alive", "protocol_only"])
     h.set_defaults(func=cmd_heartbeat)
 
-    w = sub.add_parser("sweep", help="run one watchdog sweep (cron entry)")
+    w = sub.add_parser("sweep", parents=[child],
+                       help="run one watchdog sweep (cron entry)")
     w.add_argument("--json", action="store_true")
     w.set_defaults(func=cmd_sweep)
 
-    w2 = sub.add_parser("watch", help="run sweeps in a loop")
+    w2 = sub.add_parser("watch", parents=[child], help="run sweeps in a loop")
     w2.add_argument("--interval", type=int, default=60)
     w2.set_defaults(func=cmd_watch)
 
-    lg = sub.add_parser("logs", help="show service logs (redacted by default)")
+    hs = sub.add_parser("history", parents=[child],
+                        help="incident timeline (sqlite event stream)")
+    hs.add_argument("--last", default="24h",
+                    help="window: 24h / 30m / 7d / 90s / all (default: 24h)")
+    hs.add_argument("--service", default=None, help="filter by service name")
+    hs.add_argument("--kind", default=None, choices=["sweep", "alert"])
+    hs.add_argument("--limit", type=int, default=50)
+    hs.add_argument("--json", action="store_true")
+    hs.set_defaults(func=cmd_history)
+
+    lg = sub.add_parser("logs", parents=[child],
+                        help="show service logs (redacted by default)")
     lg.add_argument("service")
     lg.add_argument("--tail", type=int, default=40)
     lg.add_argument("--raw", action="store_true")
@@ -286,6 +407,7 @@ def main(argv=None):
         return args.func(args)
     except FileNotFoundError as e:
         print("config not found: {} ({})".format(args.config, e))
+        print("create one with: fleetkeeper init --config {}".format(args.config))
         return 2
 
 

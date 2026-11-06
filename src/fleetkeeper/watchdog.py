@@ -20,12 +20,13 @@ interval, one alert on recovery.
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
 import time
 
-from . import proc
+from . import history, notify, proc
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -64,7 +65,14 @@ def _resolve(p, base):
 
 def net_gate(targets, timeout=3.0):
     """True if any probe target accepts a TCP connection (basic reachability,
-    deliberately independent of VPN/DNS state)."""
+    deliberately independent of VPN/DNS state).
+
+    An empty target list means the operator did not enable the network gate.
+    It must NOT be read as "WAN is down" -- the old fall-through returned
+    False for an empty list and suspended healing forever on a fresh install.
+    """
+    if not targets:
+        return True
     for host, port in targets:
         try:
             s = socket.create_connection((host, port), timeout=timeout)
@@ -89,8 +97,12 @@ def alert_log(cfg_base, alert_log, title, message):
     return line
 
 
-def run(config_path):
-    """One watchdog sweep. Returns the summary dict (also the API for tests)."""
+def _run_core(config_path):
+    """One watchdog sweep: detection, gating, healing, alert dedup.
+
+    Kept free of notification/history concerns so a broken outbound channel
+    can never influence whether a port gets healed. `run()` wraps this.
+    """
     cfg_path = os.path.abspath(config_path)
     cfg_base = os.path.dirname(cfg_path)
     cfg = load_config(cfg_path)
@@ -284,3 +296,77 @@ def _child_env():
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     return env
+
+
+def run(config_path):
+    """Public sweep API = core sweep + outbound alerts + timeline.
+
+    Wrapping (rather than editing) the core keeps the safety semantics
+    untouched: notification and history happen AFTER healing decisions are
+    made, and every failure here is isolated from the healing path.
+    """
+    summary = _run_core(config_path)
+    summary.setdefault("notify", [])
+    try:
+        cfg_path = os.path.abspath(config_path)
+        cfg_base = os.path.dirname(cfg_path)
+        cfg = load_config(cfg_path)
+        wcfg = cfg.get("watchdog") or {}
+        db = history.db_path_for(cfg_base, wcfg)
+        try:
+            retention = float(wcfg.get("history_retention_days",
+                                       history.DEFAULT_RETENTION_DAYS))
+        except (TypeError, ValueError):
+            retention = history.DEFAULT_RETENTION_DAYS
+
+        # Core issues are human-readable strings like "GW(:8080) no process
+        # listening". Map the port back to the registry so the timeline and
+        # the webhook payload carry a real service name -- otherwise every row
+        # says "fleet" and `--service` can never filter anything.
+        by_port = {}
+        for key, svc in ((cfg.get("registry") or {}).get("services") or {}).items():
+            p = svc.get("port")
+            if p is not None:
+                by_port[int(p)] = svc.get("name") or key
+        affected = []
+        for line in (summary.get("issues") or []):
+            m = re.search(r"\(:(\d+)\)", line)
+            if not m:
+                continue
+            port = int(m.group(1))
+            name = by_port.get(port)
+            if name and name not in [n for n, _ in affected]:
+                affected.append((name, port))
+        svc_label = ", ".join(n for n, _ in affected) or None
+        first_port = affected[0][1] if affected else None
+        summary["affected_services"] = [
+            {"name": n, "port": p} for n, p in affected]
+
+        alerts = summary.get("alerts") or []
+        for line in alerts:
+            event = notify.parse_alert_line(line)
+            event.update({
+                "kind": "alert",
+                "level": "P0" if summary.get("network_down") else "warning",
+                "service": svc_label,
+                "port": first_port,
+                "issues": summary.get("issues") or [],
+                "healed": summary.get("healed") or [],
+                "net_ok": not summary.get("network_down"),
+                "network_down": bool(summary.get("network_down")),
+            })
+            channels = notify.emit(cfg_base, wcfg, event)
+            summary["notify"].append({"title": event["title"], "channels": channels})
+            history.append(db, event, retention_days=retention)
+        sweep = history.sweep_event(summary)
+        sweep["service"] = svc_label
+        sweep["port"] = first_port
+        history.append(db, sweep, retention_days=retention)
+        summary["history_file"] = db
+    except Exception as exc:
+        # Never let diagnostics turn a healthy sweep into a failed one. The
+        # message is redacted: config paths and URLs can carry credentials.
+        from . import redact
+        summary["notify_error"] = redact.redact(
+            "{}: {}".format(type(exc).__name__, exc))[:200]
+    return summary
