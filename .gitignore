@@ -7,6 +7,10 @@ dist/
 runtime/
 # local fleet config created by `fleetkeeper init`
 config/fleet.json
+# config created next to the frozen exe on first run
+fleet.json
+# PyInstaller build artefacts (build/ and dist/ are already ignored above)
+*.spec
 *.err.log
 *.bak_*
 PAUSE_LLM

@@ -4,6 +4,8 @@ include CHANGELOG.md
 include CONTRIBUTING.md
 include SECURITY.md
 include RELEASING.md
+include start.bat
+recursive-include scripts *.py *.bat
 recursive-include config *.json
 recursive-include tests *.py
 global-exclude __pycache__/*

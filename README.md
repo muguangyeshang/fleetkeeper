@@ -20,6 +20,13 @@ fleetkeeper --config fleet.json history --last 24h          # what healed itself
 fleetkeeper --config fleet.json sweep                       # cron entry: detect, gate, heal, alert
 ```
 
+> **不想敲命令？** 直接双击 `fleetkeeper.exe`（用 `scripts\build_exe.bat` 生成，
+> 或从 release 下载）。它会自己在旁边生成 `fleet.json`、开一个中文网页、
+> 自动打开浏览器，下面这些命令全变成按钮：填服务、立即体检、跑一次守护、
+> 查时间线、导出报告、停止。不用装 Python、不用开终端、不用联网。
+> 页面只监听 `127.0.0.1`，关掉程序窗口即停止。命令行用户敲 `fleetkeeper`
+> （不带任何参数）会打开同一个面板。
+
 The CI badge goes live after the repository is pushed to GitHub.
 
 ## Contents
@@ -42,7 +49,22 @@ The CI badge goes live after the repository is pushed to GitHub.
 
 ## Install
 
-Not published on PyPI yet. Two ways, both from a checkout:
+Not published on PyPI yet. Three ways:
+
+**A) Windows, no Python at all — just double-click.** Build the single-file
+exe once (needs Python + `pyinstaller` only on the *building* machine):
+
+```bat
+scripts\build_exe.bat
+```
+
+`dist\fleetkeeper.exe` is ~8 MB, self-contained, and runs on a machine with
+no Python installed. Put it in any folder and double-click it; a browser page
+opens, `fleet.json` is created next to the exe, and the page's buttons replace
+every command below. `start.bat` is the same console for machines that already
+have Python. The exe is built locally, not committed to the repository.
+
+**B/C) Command line, both from a checkout:**
 
 ```bash
 # A) editable install — gives you the `fleetkeeper` console command
@@ -53,8 +75,9 @@ fleetkeeper --help
 PYTHONPATH=src python -m fleetkeeper.cli --config config/fleet.json doctor
 ```
 
-The Quick start below assumes A. With B, prefix each command with
-`PYTHONPATH=src` (Windows: `set PYTHONPATH=src` first).
+The Quick start below assumes the editable install. With the PYTHONPATH
+route, prefix each command with `PYTHONPATH=src` (Windows: `set PYTHONPATH=src`
+first). With the exe, none of it is needed.
 
 Tagging a `v*` release builds the sdist/wheel, opens a **draft** GitHub release
 and publishes to PyPI via Trusted Publishing (`.github/workflows/publish.yml`).
@@ -124,21 +147,24 @@ fleetkeeper refuses to pretend otherwise.
 ## Quick start
 
 ```bash
-# 1. create a config (no checkout needed -- `init` works from a wheel install)
+# 0. easiest: double-click the exe, or just type `fleetkeeper` (no arguments).
+#    It creates fleet.json and opens the browser console by itself.
+
+# 1. command-line equivalent (no checkout needed -- `init` works from a wheel)
 fleetkeeper init --config fleet.json --port 8080
 
 # 2. see the whole fleet with evidence levels (text, JSON, or an offline HTML page)
-python -m fleetkeeper.cli --config config/fleet.json doctor
-python -m fleetkeeper.cli --config config/fleet.json doctor --html status.html
+fleetkeeper --config fleet.json doctor
+fleetkeeper --config fleet.json doctor --html status.html
 
 # 3. run one watchdog sweep (this is your cron entry)
-python -m fleetkeeper.cli --config config/fleet.json sweep
+fleetkeeper --config fleet.json sweep
 
 # 4. look back at what happened
-python -m fleetkeeper.cli --config config/fleet.json history --last 24h
+fleetkeeper --config fleet.json history --last 24h
 
 # or run sweeps in a loop
-python -m fleetkeeper.cli --config config/fleet.json watch --interval 60
+fleetkeeper --config fleet.json watch --interval 60
 ```
 
 `init` writes one placeholder service on `--port`; edit
@@ -321,6 +347,8 @@ collapse the ladder to L0. If `netstat` is absent entirely, install `psutil`
 ## CLI
 
 ```
+fleetkeeper                                            open the browser console
+fleetkeeper start [--port N] [--no-browser]             same console, explicit
 fleetkeeper init [--config FILE] [--port N] [--force]   write a runnable config
 fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
 fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis (P0 vs uncovered)
@@ -346,8 +374,11 @@ fleetkeeper logs SERVICE [--tail N] [--raw]             service logs, redacted b
 
 ## Tested
 
-88 pytest tests, including a fake live fleet over real HTTP sockets, a real
-local webhook receiver and a real subprocess command hook:
+99 pytest tests, including a fake live fleet over real HTTP sockets, a real
+loopback browser console exercised over HTTP (routing, first-run config,
+service editing, sweep, timeline, report, graceful stop), a frozen-exe
+double-click smoke run, a real local webhook receiver and a real subprocess
+command hook:
 cooldown persistence across green sweeps, duplicate-instance handling,
 network-down suspension, pause gates, alert storm suppression, clock-skew
 poisoning, lease renewal keeping its baseline, redaction of keys/JWTs/

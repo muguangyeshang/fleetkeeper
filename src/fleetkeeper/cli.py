@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """fleetkeeper CLI.
 
+    fleetkeeper                                         open the browser console
     fleetkeeper init [--config FILE] [--port N]          write a runnable config
+    fleetkeeper start [--port N] [--no-browser]          browser console (no typing)
     fleetkeeper status [SERVICE] [--json | --html FILE]  evidence ladder
     fleetkeeper doctor [--json | --html FILE]            fleet-wide diagnosis
     fleetkeeper heartbeat SERVICE                        write one heartbeat
@@ -262,6 +264,13 @@ def cmd_history(args):
     return 0
 
 
+def cmd_start(args):
+    """Open the local browser console; auto-create the config on first run."""
+    from . import ui  # late import: ui imports this module for the ladder logic
+    return ui.serve(args.config, port=args.port,
+                    open_browser=not args.no_browser)
+
+
 def cmd_init(args):
     """Create a runnable config without needing a repository checkout."""
     path = os.path.abspath(args.config)
@@ -335,6 +344,14 @@ def build_parser():
                    help="fleet config JSON (default: config/fleet.json)")
     sub = p.add_subparsers(dest="cmd")
 
+    st = sub.add_parser("start", parents=[child],
+                        help="open the local browser console (no commands to learn)")
+    st.add_argument("--port", type=int, default=0,
+                    help="console port; 0 = pick a free port automatically")
+    st.add_argument("--no-browser", action="store_true",
+                    help="serve without opening a browser (for tests/remote use)")
+    st.set_defaults(func=cmd_start)
+
     ini = sub.add_parser("init", parents=[child],
                          help="write a runnable config template")
     ini.add_argument("--port", type=int, default=template.DEFAULT_PORT,
@@ -396,11 +413,21 @@ def build_parser():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    # No arguments means "just open it". This is what double-clicking the exe
+    # produces, and it is the only path a first-time user ever needs.
+    if not argv:
+        argv = ["start"]
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
         parser.print_help()
         return 1
+    # A frozen exe must keep its config next to itself: Explorer usually sets
+    # CWD to a system directory the user cannot find (or cannot write to).
+    if getattr(sys, "frozen", False) and not any(
+            a == "--config" or a.startswith("--config=") for a in argv):
+        args.config = os.path.join(
+            os.path.dirname(os.path.abspath(sys.executable)), "fleet.json")
     # pass the resolved config path explicitly; no module-level mutable state
     args.config_path = os.path.abspath(args.config)
     try:

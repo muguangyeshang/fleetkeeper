@@ -6,6 +6,17 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `ui.py` + `fleetkeeper start`: a zero-dependency local browser console.
+  Running `fleetkeeper` with **no arguments** (or double-clicking the exe)
+  generates `fleet.json`, serves a Chinese page bound to `127.0.0.1` only,
+  and opens the default browser. Buttons replace status / doctor / sweep /
+  history / report; the page adds a service by name + port and replaces the
+  generated placeholder on first save. No CDN, no external assets, no secrets
+  crossing the wire (only name/port/service rows are returned).
+- `scripts/exe_entry.py`, `scripts/build_exe.bat`, `start.bat`: build a
+  standalone Windows one-file exe (~8 MB, runs with no Python on PATH).
+  `sys.frozen` resolves its config next to the exe instead of Explorer's CWD.
+  `FLEETKEEPER_NO_BROWSER=1` and `start --no-browser` support headless hosts.
 - `fleetkeeper init`: a wheel install now produces a runnable `fleet.json` in
   one command. Previously the README told users to copy a file that only
   exists in a repository checkout. `--port`, `--force`, and refusal to clobber
@@ -28,9 +39,10 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 - `template.py`: built-in config template so the console command is
   self-sufficient; covered by a test that keeps its keys in sync with the
   shipped `config/fleet.example.json`.
-- 37 new tests (88 total), stable across three consecutive runs: real local
-  webhook receiver, real subprocess command hook, XSS escaping, timeline
-  retention, P0 badges after JSON round-trip, CLI html/history/init paths.
+- 48 new tests (99 total), stable across three consecutive runs: real loopback
+  HTTP console tests, a real local webhook receiver, a real subprocess command
+  hook, XSS escaping, timeline retention, P0 badges after JSON round-trip,
+  CLI html/history/init/start paths, and a frozen-exe double-click smoke run.
 - Config-not-found errors now point at `fleetkeeper init`.
 - Add CI matrix (3 operating systems, Python 3.8–3.13) and a tag-triggered
   publish workflow with PyPI Trusted Publishing and draft releases.
