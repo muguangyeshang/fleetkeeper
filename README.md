@@ -29,6 +29,21 @@ fleetkeeper --config fleet.json sweep                       # cron entry: detect
 
 The CI badge goes live after the repository is pushed to GitHub.
 
+## What it looks like
+
+The panel the exe opens — services it found by itself, each with the
+L0–L4 evidence ladder, one-click auto-restart, and the discovery sidebar
+that lists every local listener (AI or not) with what it actually probed:
+
+![Console dashboard](docs/screenshots/dashboard.png)
+
+<details>
+<summary>Full page (timeline, alerts, logs, config)</summary>
+
+![Full console](docs/screenshots/dashboard-full.png)
+
+</details>
+
 ## Who this is for
 
 **Install it if** you run several long-lived services on one machine (an AI

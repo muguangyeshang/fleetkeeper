@@ -47,7 +47,7 @@ def test_canary_uses_service_port_when_omitted():
                   "expect": {"status": 200, "json_path": "data", "min_items": 1}}
         r = E.check_canary(canary, default_port=port)
         assert r["passed"] is True, r
-        assert "data hit 1 items" in r["detail"]
+        assert "data 命中 1 项" in r["detail"]
         assert _JsonHandler.hits == 1, "json_path must reuse the probe response"
     finally:
         srv.shutdown()
@@ -56,7 +56,7 @@ def test_canary_uses_service_port_when_omitted():
 def test_canary_without_any_port_fails_loudly():
     r = E.check_canary({"type": "http", "path": "/"})
     assert r["passed"] is False
-    assert "no port" in r["detail"]
+    assert "都没写端口" in r["detail"]
 
 
 def test_readme_example_reaches_l4(monkeypatch):
@@ -108,7 +108,7 @@ def test_probe_read_is_bounded():
             {"type": "http", "path": "/", "expect": {"json_path": "data"}},
             default_port=port, max_bytes=64)
         assert c["passed"] is False
-        assert "parse failed" in c["detail"]
+        assert "解析失败" in c["detail"]
     finally:
         srv.shutdown()
 
@@ -173,6 +173,6 @@ def test_unknown_pid_does_not_collapse_ladder(monkeypatch):
                                 "health": {"path": "/"}})
         assert r["level"] >= 2, r
         assert r["pids"] == []
-        assert any("PID unavailable" in e for e in r["evidence"])
+        assert any("拿不到 PID" in e for e in r["evidence"])
     finally:
         srv.shutdown()

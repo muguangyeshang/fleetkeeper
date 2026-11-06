@@ -83,16 +83,16 @@ def check_canary(canary, timeout=8.0, default_port=None, max_bytes=MAX_PROBE_BYT
        "expect": {"status": 200, "json_path": "data", "min_items": 1}}
     """
     if not canary:
-        return {"configured": False, "passed": None, "detail": "no business canary configured"}
+        return {"configured": False, "passed": None, "detail": "没配业务探针"}
     ctype = canary.get("type")
     if ctype != "http":
         return {"configured": True, "passed": None,
-                "detail": "unsupported canary type: {}".format(ctype)}
+                "detail": "不支持的探针类型：{}".format(ctype)}
 
     port = canary.get("port") or default_port
     if port is None:
         return {"configured": True, "passed": False,
-                "detail": "canary declares no port and service declares none"}
+                "detail": "探针和服务都没写端口"}
 
     p = http_probe(port, canary.get("path", "/"),
                    method=canary.get("method", "GET"),
@@ -100,17 +100,17 @@ def check_canary(canary, timeout=8.0, default_port=None, max_bytes=MAX_PROBE_BYT
                    timeout=timeout, max_bytes=max_bytes)
     if not p["ok"]:
         return {"configured": True, "passed": False,
-                "detail": "canary request failed: {}".format(p["error"])}
+                "detail": "业务探针请求失败：{}".format(p["error"])}
 
     expect = canary.get("expect") or {}
     ok = True
     detail = "HTTP {}".format(p["status"])
     if "status" in expect and p["status"] != expect["status"]:
         ok = False
-        detail += " (expected {})".format(expect["status"])
+        detail += "（期望 {}）".format(expect["status"])
     if "min_bytes" in expect and p["bytes"] < expect["min_bytes"]:
         ok = False
-        detail += " (body {}B < {}B)".format(p["bytes"], expect["min_bytes"])
+        detail += "（响应 {}B，少于 {}B）".format(p["bytes"], expect["min_bytes"])
     if "json_path" in expect:
         import json
         try:
@@ -131,11 +131,11 @@ def check_canary(canary, timeout=8.0, default_port=None, max_bytes=MAX_PROBE_BYT
             min_items = int(expect.get("min_items", 1))
             if n < min_items:
                 ok = False
-            detail += " ({} hit {} items, required >={})".format(
+            detail += "（{} 命中 {} 项，要求 >={}）".format(
                 expect["json_path"], n, min_items)
         except Exception as e:
             ok = False
-            detail += " (parse failed: {})".format(e)
+            detail += "（解析失败：{}）".format(e)
     return {"configured": True, "passed": ok, "detail": detail}
 
 
@@ -158,7 +158,7 @@ def evaluate_service(svc):
            "evidence": [], "issues": [], "notes": []}
 
     if port is None:
-        out["issues"].append("registry entry declares no port")
+        out["issues"].append("配置里没有写端口")
         return out
 
     owners = proc.find_listener(port)
@@ -170,23 +170,23 @@ def evaluate_service(svc):
     out["pids"] = real_pids
 
     if not pids:
-        out["issues"].append("no process listening")
+        out["issues"].append("没有进程在监听这个端口")
         return out
     out["level"] = 1
     if real_pids:
-        out["evidence"].append("PID {} listening on :{}".format(
+        out["evidence"].append("进程 PID {} 正在监听 :{}".format(
             ",".join(map(str, real_pids)), port))
     else:
-        out["evidence"].append("listener on :{} (PID unavailable from netstat)".format(port))
+        out["evidence"].append("端口 :{} 有监听（netstat 拿不到 PID）".format(port))
 
     if len(real_pids) > 1:
-        out["issues"].append("{} processes listening simultaneously (duplicate instance)".format(len(real_pids)))
+        out["issues"].append("有 {} 个进程同时监听（疑似重复实例）".format(len(real_pids)))
 
     if not tcp_probe(port):
-        out["issues"].append("TCP connect failed (port occupied but zombie)")
+        out["issues"].append("TCP 连不上（端口被占但服务没响应）")
         return out
     out["level"] = 2
-    out["evidence"].append("TCP connect OK")
+    out["evidence"].append("TCP 连接成功")
 
     health = svc.get("health") or {}
     if str(health.get("type") or "http").lower() == "tcp":
@@ -206,12 +206,12 @@ def evaluate_service(svc):
                     method=health.get("method", "GET"),
                     timeout=health.get("timeout", 5))
     if not hp["ok"]:
-        out["issues"].append("HTTP probe failed: {}".format(hp["error"]))
+        out["issues"].append("HTTP 探测失败：{}".format(hp["error"]))
         return out
     out["level"] = 3
     out["evidence"].append("HTTP {} {}".format(hp["status"], hp["reason"] or ""))
     if hp["status"] >= 500:
-        out["issues"].append("service returns 5xx; business layer unavailable")
+        out["issues"].append("服务返回 5xx，业务层不可用")
     # A 4xx from the health path is not proof of a broken service. Most
     # OpenAI-compatible gateways answer 404 or 401 on "/" while serving
     # /v1/models perfectly; the ladder already reached L3 on that status.
@@ -221,23 +221,23 @@ def evaluate_service(svc):
 
     if canary_is_protocol_only(svc):
         canary = {"configured": True, "passed": None, "proof": "protocol_only",
-                  "detail": "same endpoint as health check; proves protocol only"}
+                  "detail": "与健康检查同一端点，只能证明协议层"}
     else:
         canary = check_canary(svc.get("canary"), default_port=port)
     out["canary"] = canary
     if canary.get("passed") is True:
         out["level"] = 4
-        out["evidence"].append("business canary passed: {}".format(canary["detail"]))
+        out["evidence"].append("业务探针通过：{}".format(canary["detail"]))
         if health_4xx:
             out["notes"].append(
                 "健康路径 {} 返回 {}，业务探测已通过，不影响判定".format(
                     health.get("path", "/"), hp["status"]))
     else:
         if canary.get("configured") and canary.get("passed") is False:
-            out["issues"].append("business canary failed: {}".format(canary["detail"]))
+            out["issues"].append("业务探针未通过：{}".format(canary["detail"]))
         if health_4xx:
             out["issues"].append(
-                "service returns {}; auth required or path mismatch".format(hp["status"]))
+                "健康路径返回 {}，可能需要鉴权或路径不对".format(hp["status"]))
 
     out["level_name"] = LEVEL_NAME[out["level"]]
     return out

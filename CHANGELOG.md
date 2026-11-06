@@ -18,6 +18,11 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
     starts the panel with the current config.
   - Notify settings. A dialog edits `watchdog.notify.webhook_url` and the
     webhook channel with validation, next to the existing test send.
+- The console speaks one language. Evidence lines and canary details
+  ("PID 16316 listening on :4002", "business canary passed: ...", "parse
+  failed") were English inside an otherwise Chinese panel -- the README
+  screenshot made that obvious. Same facts, Chinese wording; the 12 tests
+  that grepped the English strings were updated to the new wording.
 - The scan now thinks before it labels. An unrecognised HTTP service used to
   be added with health path `/`, which real gateways often answer with 404 --
   the card turned red on its very first look. The scan already fetched the

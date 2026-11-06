@@ -17,7 +17,7 @@ def _serve(handler):
 
 def test_l0_no_port():
     r = E.evaluate_service({"name": "x"})
-    assert r["level"] == 0 and "no port" in r["issues"][0]
+    assert r["level"] == 0 and "端口" in r["issues"][0]
 
 
 def test_l1_dead_port():
@@ -52,7 +52,7 @@ def test_l2_to_l4_healthy_service():
         # the ladder must hold end to end.
         assert r["level"] >= 3, r
         if r["level"] == 4:
-            assert "canary passed" in r["evidence"][-1]
+            assert "业务探针通过" in r["evidence"][-1]
     finally:
         srv.shutdown()
 
