@@ -73,16 +73,43 @@ of this:
    remaining placeholder is expected: nothing is listening on its port.
    A scenario picker and a manual name+port form remain as fallbacks.
 
-Pass `--no-browser` to `start` when running headless. The console exposes
-`GET /`, `GET /api/state`, `GET /api/history`, `GET /api/config`,
-`GET /api/presets`, `GET /api/discover`, `GET /report`, `POST /api/sweep`,
-`POST /api/service`, `POST /api/preset`, `POST /api/discover`,
-`POST /api/stop`. Three routes rewrite config:
-`/api/service` edits one entry, `/api/preset` replaces the list, and
-`/api/discover` appends server-side scan results identified by id. None
-accepts a raw config, a path or a command. `/api/preset` refuses to overwrite
-saved services unless `force` is true, which the browser sends only after a
+Pass `--no-browser` to `start` when running headless. The console is a full
+dashboard: a six-metric KPI strip, service cards with an L0-L4 step ladder,
+a filterable timeline, an alert list, and a sidebar holding discovery results,
+quick add, the scenario picker, a redacted config viewer and a log tail.
+
+Read routes: `GET /`, `/api/ping`, `/api/state`, `/api/overview`,
+`/api/history`, `/api/config` (`?view=full` for the redacted full text,
+`&download=1` for an attachment), `/api/presets`,
+`/api/discover`, `/api/watch`, `/api/alerts`,
+`/api/logs?service=KEY&tail=40[&raw=1]`,
+`/api/check?key=KEY`, `/report`.
+
+Write routes: `POST /api/sweep`, `/api/service`, `/api/service/update`,
+`/api/service/action` (`delete` / `pause` / `resume`), `/api/preset`,
+`/api/discover`, `/api/heartbeat`, `/api/check`, `/api/watch`
+(`start` / `stop`, interval 5-3600 s), `/api/notify-test`, `/api/stop`.
+
+Routes that rewrite config are explicit and validated. `/api/service` edits
+one entry; `/api/service/update` accepts only `name`, `port`, `health_path`,
+`health_timeout`, `canary_path`, `heartbeat_period` and `log_file`;
+`/api/service/action` moves entries between `registry.services` and
+`registry.paused`; `/api/preset` replaces the list; `/api/discover` appends
+server-side scan results identified by id; `/api/heartbeat` writes a deadman
+heartbeat file. None accepts a raw config, a recovery command, an alert
+webhook, an absolute path or an external URL. `/api/preset` refuses to
+overwrite saved services unless `force` is true, sent only after a browser
 confirm dialog; `/api/discover` only appends and skips ports already present.
+`GET /api/discover` returns `configured: true` on candidates whose port is
+already in `fleet.json`; those rows are never pre-selected and
+`POST /api/discover` ignores their ids.
+
+`POST /api/watch` starts an in-process loop that calls the same
+`watchdog.run()` as the CLI and the scheduled task. `GET /api/watch` reports
+whether it is running, its interval, run count and last error. Evidence
+collection for `/api/state` and `/api/overview` runs in a bounded thread pool
+(`manage.evaluate_rows`), so wall time is the slowest single probe rather
+than the sum of all probes.
 
 ### 3.1 Starting scenarios
 

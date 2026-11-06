@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.join(ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from fleetkeeper import discover, history, redact, report, safeio, template, ui  # noqa: E402
+from fleetkeeper import discover, history, manage, redact, report, safeio, template, ui  # noqa: E402
 
 RESULTS = []
 
@@ -65,7 +65,9 @@ def run_http(base, cfg, work):
             "btn-check", "btn-sweep", "btn-report", "btn-stop",
             "btn-reconnect", "preset-select", "preset-form", "add",
             "auto", "msg", "cards", "timeline", "conn",
-            "btn-discover", "btn-discover-add", "discover-list")), page[:200])
+            "btn-discover", "btn-discover-add", "discover-list",
+            "kpi-total", "btn-watch", "watch-interval", "editor",
+            "alert-list", "tl-window", "log-service", "config-text")), page[:200])
     check("page is fully offline",
           "<script src" not in page and "<link " not in page and
           "https://" not in page and "cdn" not in page.lower())
@@ -255,6 +257,104 @@ def run_http(base, cfg, work):
               ["registry"]["services"].keys() == saved.keys(), (code, body[:120]))
     finally:
         discover.scan = real_scan
+
+    # ---- management endpoints added with the full dashboard --------------
+    code, _, body = req(base, "/api/config?view=full")
+    check("GET /api/config?view=full returns redacted JSON",
+          code == 200 and "registry" in jbody(body).get("text", ""),
+          (code, body[:120]))
+    check("config download route is reachable",
+          req(base, "/api/config?view=full&download=1")[0] == 200)
+    code, _, body = req(base, "/api/overview")
+    ov = jbody(body) if code == 200 else {}
+    check("GET /api/overview aggregates",
+          code == 200 and all(k in ov for k in
+                              ("total", "healthy", "business", "event_count",
+                               "watch", "alert_rows")), (code, body[:140]))
+    check("GET /api/watch reports a stopped loop",
+          jbody(req(base, "/api/watch")[2]).get("running") is False)
+    check("GET /api/alerts is bounded",
+          req(base, "/api/alerts?limit=5")[0] == 200 and
+          req(base, "/api/alerts?limit=abc")[0] == 400)
+    check("GET /api/logs requires a service",
+          req(base, "/api/logs")[0] == 400)
+
+    code, _, body = req(base, "/api/check", {"key": "ollama"})
+    check("POST /api/check grades one service",
+          code == 200 and jbody(body)["row"]["key"] == "ollama",
+          (code, body[:120]))
+    check("POST /api/check rejects an unknown key",
+          req(base, "/api/check", {"key": "ghost"})[0] == 400)
+
+    code, _, body = req(base, "/api/heartbeat",
+                        {"key": "ollama", "ok": True, "processed": 3})
+    check("POST /api/heartbeat writes a heartbeat",
+          code == 200 and "心跳" in jbody(body).get("message", ""),
+          (code, body[:120]))
+    hb = os.path.join(work, "runtime", "heartbeat", "ollama.json")
+    check("heartbeat file lands under runtime",
+          os.path.isfile(hb) and jbody(open(hb, encoding="utf-8").read())[
+              "processed"] == 3, hb)
+
+    code, _, body = req(base, "/api/service/update", {
+        "key": "ollama",
+        "patch": {"health_path": "/healthz", "canary_path": "/v1/models",
+                  "heartbeat_period": 30, "log_file": "svc.log"}})
+    check("POST /api/service/update applies whitelisted fields",
+          code == 200 and jbody(open(cfg, encoding="utf-8").read())[
+              "registry"]["services"]["ollama"]["health"]["path"] == "/healthz",
+          (code, body[:120]))
+    check("update rejects an external URL",
+          req(base, "/api/service/update",
+              {"key": "ollama", "patch": {"health_path": "http://x/y"}})[0] == 400)
+    check("update rejects a recovery command",
+          req(base, "/api/service/update",
+              {"key": "ollama", "patch": {"recovery": "calc.exe"}})[0] == 400)
+
+    secret = "sk-" + "D" * 24
+    with open(os.path.join(work, "svc.log"), "w", encoding="utf-8") as lf:
+        lf.write("ok\ntoken=" + secret + "\n")
+    code, _, body = req(base, "/api/logs?service=ollama&tail=10")
+    log = jbody(body) if code == 200 else {}
+    check("GET /api/logs redacts secrets",
+          code == 200 and secret not in body and log.get("redacted", 0) >= 1,
+          (code, body[:160]))
+    check("GET /api/logs --raw shows the original",
+          secret in req(base, "/api/logs?service=ollama&raw=1")[2])
+
+    code, _, body = req(base, "/api/service/action",
+                        {"key": "worker", "action": "pause"})
+    check("pause moves a service out of the watched list",
+          code == 200 and "worker" not in jbody(open(cfg, encoding="utf-8").read())[
+              "registry"]["services"], (code, body[:120]))
+    code, _, body = req(base, "/api/service/action",
+                        {"key": "worker", "action": "resume"})
+    check("resume puts it back",
+          code == 200 and "worker" in jbody(open(cfg, encoding="utf-8").read())[
+              "registry"]["services"], (code, body[:120]))
+
+    code, _, body = req(base, "/api/watch",
+                        {"action": "start", "interval": 5})
+    check("POST /api/watch starts the resident loop",
+          code == 200 and jbody(body).get("watch", {}).get("running") is True,
+          (code, body[:120]))
+    check("watch status is readable",
+          jbody(req(base, "/api/watch")[2])["interval"] == 5)
+    code, _, body = req(base, "/api/watch", {"action": "stop"})
+    check("POST /api/watch stops it", code == 200 and
+          "已停止" in jbody(body).get("message", ""), (code, body[:120]))
+    check("watch rejects an out-of-range interval",
+          req(base, "/api/watch", {"action": "start", "interval": 1})[0] == 400)
+
+    code, _, body = req(base, "/api/notify-test", {})
+    check("notify-test explains an unconfigured channel",
+          code == 200 and jbody(body).get("configured") is False,
+          (code, body[:120]))
+
+    check("manage.export_config masks a secret",
+          secret not in manage.export_config(
+              {"watchdog": {"notify": {"webhook_url": "token=" + secret}}}) and
+          "watchdog" in manage.export_config({"watchdog": {}}))
 
     # ---- shutdown, always last -------------------------------------------
     code, _, body = req(base, "/api/stop", {})

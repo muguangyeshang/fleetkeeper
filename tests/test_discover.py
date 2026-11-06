@@ -388,3 +388,55 @@ def _req_ui(base, path, payload):
             return r.status, "", r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         return e.code, "", e.read().decode("utf-8")
+
+
+def test_scan_marks_a_port_that_is_already_configured(services):
+    """The console must not offer to add a port that fleet.json already has:
+    doing so grew the registry with duplicates on every rescan."""
+    port = services["ollama"]
+    res = discover.scan(ports=[port], listener_map={}, existing_ports=[port])
+    cand = res["candidates"][0]
+    assert cand["configured"] is True
+    assert cand["recommended"] is False          # never pre-checked
+
+
+def test_scan_leaves_a_new_port_recommended(services):
+    port = services["ollama"]
+    res = discover.scan(ports=[port], listener_map={}, existing_ports=[1, 2])
+    cand = res["candidates"][0]
+    assert cand["configured"] is False
+    assert cand["recommended"] is True
+
+
+def test_ui_discover_get_passes_the_configured_ports(console, monkeypatch):
+    base, cfg = console
+    seen = {}
+
+    def fake(**kw):
+        seen.update(kw)
+        return {"scanned_ports": [], "http_ports": [], "candidates": [],
+                "recommended": [], "elapsed_ms": 0, "source": "test",
+                "auto_applied": 0}
+
+    monkeypatch.setattr(ui.discover, "scan", fake)
+    _get(base, "/api/discover")
+    want = [s["port"] for s in
+            json.load(open(cfg, encoding="utf-8"))["registry"]["services"].values()]
+    assert seen["existing_ports"] == want and want
+
+
+def test_ui_discover_post_passes_the_configured_ports(
+        console, monkeypatch, services):
+    base, cfg = console
+    seen = []
+
+    def fake(**kw):
+        seen.append(kw)
+        return _fake_scan(services)
+
+    monkeypatch.setattr(ui.discover, "scan", fake)
+    code, _, _ = _req_ui(base, "/api/discover", {"rescan": True, "ids": []})
+    assert code == 200
+    want = [s["port"] for s in
+            json.load(open(cfg, encoding="utf-8"))["registry"]["services"].values()]
+    assert seen and seen[-1]["existing_ports"] == want and want

@@ -386,11 +386,14 @@ def _ordered_ports(listener_map, exclude_ports, max_ports, explicit_ports):
 
 
 def scan(ports=None, exclude_ports=None, max_ports=MAX_PORTS,
-         timeout=DEFAULT_TIMEOUT, listener_map=None, workers=MAX_WORKERS):
+         timeout=DEFAULT_TIMEOUT, listener_map=None, workers=MAX_WORKERS,
+         existing_ports=None):
     """Scan localhost listeners and return service candidates. Never writes.
 
     `listener_map` is injectable for tests and for hosts where proc.listeners()
     is known to be unavailable. `ports` overrides discovery entirely.
+    `existing_ports` marks rows already present in fleet.json so the console
+    can grey them out instead of offering to add the same port twice.
     """
     started = time.time()
     try:
@@ -450,6 +453,19 @@ def scan(ports=None, exclude_ports=None, max_ports=MAX_PORTS,
         if totals[base] > 1:
             seen[base] = seen.get(base, 0) + 1
             c["name"] = "{} {}".format(base, seen[base])[:64]
+
+    # A configured candidate must not look like a fresh find, otherwise the
+    # user adds the same port again and the registry grows duplicates.
+    have = set()
+    for p in existing_ports or ():
+        try:
+            have.add(int(p))
+        except (TypeError, ValueError):
+            continue
+    for c in candidates:
+        c["configured"] = c["port"] in have
+        if c["configured"]:
+            c["recommended"] = False
 
     return {
         "scanned_ports": ordered,

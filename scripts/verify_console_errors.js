@@ -26,11 +26,19 @@ const discoveryPayload = {
 };
 const statePayload = {
   generated_at: '2026-11-06 20:00:00', config_path: 'fleet.json',
-  services: [{name: 'Example Service', port: 8080, level: 'L0_CONFIG',
-              heartbeat: 'NO_HEARTBEAT', pids: [], issues: []}],
+  services: [{key: 'example', name: 'Example Service', port: 8080,
+              level: 'L0_CONFIG', level_number: 0, health_path: '/',
+              heartbeat: 'NO_HEARTBEAT', hb_age: null, pids: [],
+              evidence: [], issues: [], has_recovery: false}],
   history: [], service_count: 1, is_placeholder: true,
   presets: [{name: 'empty', label: '空白起步',
-             services: [{name: 'Example Service', port: 8080}]}]
+             services: [{name: 'Example Service', port: 8080}]}],
+  service_details: [],
+  overview: {total: 1, healthy: 0, attention: 0, down: 1, business: 0,
+             heartbeat_ok: 0, paused: 0, event_count: 0,
+             last_event: null, last_sweep: null, alert_rows: [],
+             alert_count: 0, watch: {running: false, interval: 60, runs: 0},
+             uptime: 1.0, generated_at: '2026-11-06 20:00:00'}
 };
 
 function makeEnv(stateFailure, pingFailure, discoveryFailure) {
@@ -77,12 +85,21 @@ function makeEnv(stateFailure, pingFailure, discoveryFailure) {
       return okJson({ok: true, pid: 1, uptime: 1.0});
     }
     if (path === '/api/discover') {
-      if (discoveryFailure === 'network') {
+      // A dead exe refuses every request, not just /api/state.
+      if (discoveryFailure === 'network' || stateFailure === 'network') {
         return Promise.reject(new TypeError('Failed to fetch'));
       }
       return okJson(discoveryPayload);
     }
-    return Promise.reject(new TypeError('Failed to fetch'));
+    if (path === '/api/config') {
+      return okJson({is_placeholder: true, services: [], paused: []});
+    }
+    if (path.indexOf('/api/history') === 0) {
+      return okJson({rows: [], count: 0});
+    }
+    // All other console routes are read-only in this stub. Returning an
+    // empty object keeps the error-path assertions focused on /api/state.
+    return okJson({});
   };
   const env = {
     document: {getElementById: el},

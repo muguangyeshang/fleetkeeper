@@ -91,11 +91,37 @@ offline status page before installing anything. One self-contained HTML file,
 generated from a real `status --json` result. No CDN, no JavaScript, no
 external references.
 
+## The dashboard
+
+`fleetkeeper start` (or the exe) opens a single self-contained Chinese page on
+`127.0.0.1`. It is a working console, not a status widget:
+
+| Area | What it does |
+|---|---|
+| KPI strip | total / protocol-healthy / needs-attention / down / business-evidence / cumulative events, plus paused and fresh-heartbeat counts |
+| Toolbar | one-shot check, one-shot sweep, **resident watchdog** with a configurable 5-3600 s interval, full report, notification test, config export, auto-refresh toggle, stop |
+| Service cards | L0-L4 ladder rendered as five steps, PID, heartbeat status and age, health path, canary path, issues, evidence; per-card re-check, heartbeat injection, edit, pause, delete |
+| Timeline | filter by window (24h / 7d / 30d / all), event kind, service and row count |
+| Alerts | last lines of the alert log, redacted |
+| Sidebar | automatic discovery results, quick add, scenario picker, redacted full config, per-service log tail with optional raw mode |
+
+Evidence for all services is collected in a bounded thread pool, so the wall
+time is one probe, not one probe per service. A skeleton fills the card grid
+during the first read; discovery and `/api/state` start in parallel. The
+cheap `GET /api/config` decides whether discovery is allowed to write, so the
+page never waits on a slow business canary to become useful.
+
+Every write route is explicit and validated. The browser can edit a name,
+port, health path, canary path, heartbeat period and log filename; it cannot
+set a recovery command, an alert webhook or an absolute/external URL. Pausing
+moves a service into `registry.paused`, which the watchdog already ignores.
+
 ## Contents
 
 - [Who this is for](#who-this-is-for)
 - [Install](#install)
 - [What it looks like](#what-it-looks-like)
+- [The dashboard](#the-dashboard)
 - [Documentation](#documentation)
 - [Project layout](#project-layout)
 - [Why this exists](#why-this-exists)
@@ -179,9 +205,10 @@ fleetkeeper/
   MANIFEST.in                sdist contents
   config/fleet.example.json  filled-out config
   config/ollama-stack.example.json  the built-in local-ai preset, checked in
-  src/fleetkeeper/           14 standard-library modules (incl. discover.py)
+  src/fleetkeeper/           16 standard-library modules
+                             (discover.py, manage.py, page.py, ui.py, ...)
   scripts/                   exe entry point, build_exe.bat, acceptance harnesses
-  tests/                     142 pytest tests in 13 files
+  tests/                     156 pytest tests in 14 files
   docs/                      user guide, Chinese manual, architecture, sample page
   start.bat                  console launcher for machines with Python
   .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
@@ -251,8 +278,9 @@ fleetkeeper refuses to pretend otherwise.
 
 ```bash
 # 0. easiest: double-click the exe, or just type `fleetkeeper` (no arguments).
-#    It creates fleet.json, opens the browser console, and offers a scenario
-#    picker on the first screen.
+#    It creates fleet.json, opens the browser console, scans the local AI
+#    services that are already running and writes them into the config.
+#    The dashboard also has a resident watchdog button -- no shell needed.
 
 # 0b. let it find the services that are already running on this machine
 fleetkeeper discover                 # report only, writes nothing
@@ -550,10 +578,11 @@ and notification while fleetkeeper owns the gated restart.
 
 ## Tested
 
-142 pytest tests, including a fake live fleet over real HTTP sockets, product
+156 pytest tests, including a fake live fleet over real HTTP sockets, product
 fingerprinting against real loopback servers, a real loopback browser console
 exercised over HTTP (routing, first-run config, autodiscovery, service
-editing, sweep, timeline, report, graceful stop), a frozen-exe
+editing, per-service actions, heartbeat, log redaction, resident watch,
+sweep, timeline, report, graceful stop), a frozen-exe
 double-click smoke run, a real local webhook receiver and a real subprocess
 command hook:
 cooldown persistence across green sweeps, duplicate-instance handling,
@@ -591,6 +620,19 @@ untouched first-run placeholder. Everything else is shown in a checkbox list.
 A wrong entry is just a registry row: change its port in the console, or run
 `fleetkeeper init --force` to start over. Nothing is killed, restarted or
 reconfigured during discovery.
+
+**Why does the page show grey skeleton cards for a second on first load?**
+`/api/state` probes every configured service (process, TCP, HTTP and canary).
+Those probes run in a bounded thread pool, but the slowest service still sets
+the wall time. The skeleton appears immediately, discovery starts in parallel,
+and the cheap `GET /api/config` answers "may I write?" without probing
+anything. On an 11-service desktop the full state read is about 1.9 s.
+
+**Do I still need `fleetkeeper watch` in a terminal?**
+No. The toolbar's "开启常驻守护" starts an in-process loop at the interval you
+enter (5-3600 s). It calls the same `watchdog.run()` as the CLI and the cron
+entry, and reports its run count and last error on the page. The CLI loop
+remains available for headless hosts.
 
 **Why does a service with `L4_BUSINESS` still show `??`?**
 L4 proves a canary passed. It does not prove the service completed a unit of

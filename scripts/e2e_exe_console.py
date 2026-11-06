@@ -83,6 +83,12 @@ def main():
         check("page has the reconnect button", 'id="btn-reconnect"' in page)
         check("page has the autodiscovery controls",
               'id="btn-discover"' in page and 'id="discover-list"' in page)
+        check("page ships the full dashboard", all(
+            'id="' + i + '"' in page for i in (
+                "kpi-total", "btn-watch", "watch-interval", "editor",
+                "alert-list", "tl-window", "log-service", "config-text")))
+        check("page has no external assets",
+              "https://" not in page and "<link " not in page)
         check("page has the Chinese recovery text",
               "重新双击 fleetkeeper.exe" in page)
         check("page never prints the raw TypeError",
@@ -95,11 +101,25 @@ def main():
 
         code, state = get(base, "/api/state")
         check("GET /api/state is 200", code == 200, code)
+        st = json.loads(state)
         check("state carries service rows",
-              json.loads(state)["service_count"] >= 1, state[:200])
+              st["service_count"] >= 1, state[:200])
+        check("state carries the KPI aggregate",
+              "total" in st.get("overview", {}) and
+              "watch" in st.get("overview", {}), list(st.keys()))
 
         code, report = get(base, "/report")
         check("GET /report is 200", code == 200, code)
+
+        code, body = get(base, "/api/overview")
+        check("GET /api/overview is 200", code == 200 and
+              "business" in json.loads(body), (code, body[:120]))
+        code, body = get(base, "/api/config?view=full")
+        check("GET /api/config?view=full is 200", code == 200 and
+              "registry" in json.loads(body).get("text", ""), (code, body[:120]))
+        code, body = get(base, "/api/watch")
+        check("GET /api/watch is 200", code == 200 and
+              json.loads(body).get("running") is False, (code, body[:120]))
 
         before = open(cfg, encoding="utf-8").read()
         started = time.time()

@@ -22,14 +22,16 @@ never change a healing decision.** That constraint produced the two-phase
 
 ## 2. Module map
 
-14 modules, 3,945 lines, zero runtime imports outside the standard library.
+16 modules, 5,035 lines, zero runtime imports outside the standard library.
 `psutil` is used opportunistically when present and is never required.
 
 | Module | Lines | Responsibility | Public surface |
 |---|---:|---|---|
+| `page.py` | 840 | The entire self-contained console HTML/CSS/JS, no external assets | `PAGE` |
+| `manage.py` | 563 | Concurrent evidence collection, aggregates, service lifecycle, logs, resident watch | `evaluate_rows()`, `overview()`, `update_service()`, `WatchLoop` |
+| `discover.py` | 573 | Localhost listener scan, product fingerprints, registry generation | `scan()`, `apply_config()`, `SIGNATURES` |
 | `cli.py` | 526 | Argument parsing, command dispatch, view assembly | `build_parser()`, `main()`, `cmd_*` |
-| `ui.py` | 834 | Local browser console, inline CSS/JS-free page, HTTP routes | `serve()`, `make_server()`, `ConsoleHandler` |
-| `discover.py` | 560 | Localhost listener scan, product fingerprints, registry generation | `scan()`, `apply_config()`, `SIGNATURES` |
+| `ui.py` | 508 | Loopback HTTP router, config/preset/discovery writes, page re-export | `serve()`, `make_server()`, `ConsoleHandler` |
 | `watchdog.py` | 379 | Sweep, gates, healing, alert dedup, wrapper | `run()`, `net_gate()`, `load_state()`, `save_state()` |
 | `report.py` | 229 | Self-contained offline HTML | `normalize()`, `render()` |
 | `proc.py` | 222 | Listener enumeration, PID verification, process ops | `listeners()`, `proc_info()`, `verify_pid()`, `kill_pid()` |
@@ -38,16 +40,18 @@ never change a healing decision.** That constraint produced the two-phase
 | `history.py` | 196 | SQLite append-only event stream | `append()`, `query()`, `parse_since()`, `sweep_event()` |
 | `safeio.py` | 192 | Atomic writes, backups, edit leases | `atomic_write_text()`, `acquire_lease()`, `write_with_lease()` |
 | `notify.py` | 160 | Webhook / command / file fan-out, redaction | `emit()`, `build_payload()`, `parse_alert_line()` |
-| `template.py` | 58 | Embedded default config for `init` | `default_config()`, `render()` |
+| `template.py` | 149 | Embedded default config and three starting scenarios | `default_config()`, `preset_config()`, `preset_list()` |
 | `redact.py` | 51 | Secret pattern scanning and masking | `scan()`, `redact()`, `safe_env()` |
 | `__init__.py` | 11 | Version | `__version__` |
 
 Dependency direction is one-way. `evidence` knows nothing about `watchdog`;
-`notify` and `history` know nothing about healing; `cli` and `ui` are the only
-modules that assemble a view. `safeio` and `redact` are leaves. `discover`
-depends on `evidence` (bounded GET), `proc` (listener table), `redact`,
-`safeio` and `template`, but never on `watchdog`: discovering a service must
-not be able to heal, kill or restart anything.
+`notify` and `history` know nothing about healing; `cli`, `ui` and `manage`
+are the only modules that assemble a view. `safeio`, `redact` and `page` are
+leaves. `discover` depends on `evidence` (bounded GET), `proc` (listener
+table), `redact`, `safeio` and `template`, but never on `watchdog`:
+discovering a service must not be able to heal, kill or restart anything.
+`manage` calls `watchdog.run()` only from its explicitly-started `WatchLoop`;
+no other console read path can trigger a sweep.
 
 ### Discovery path
 
@@ -188,9 +192,17 @@ A sweep is sequential across services: **O(n)** in the number of services,
 with one `netstat` call batched for the whole port set rather than one per
 port. Per-service cost is dominated by network timeouts, so the worst case
 is roughly `n * (tcp_timeout + http_timeout + canary_timeout)` on a host
-where every service is down. With defaults that is bounded, but a fleet of
-hundreds of dead ports will make one sweep slow. Concurrent probing is on
-the roadmap and is the main known scaling limit.
+where every service is down. Concurrent probing inside one sweep is still
+the main known scaling limit.
+
+The *read* path is different. `manage.evaluate_rows()` grades all services
+in a `ThreadPoolExecutor` capped at 8 workers, so `/api/state` costs
+**O(max probe latency)** for fleets up to that size instead of O(sum). On an
+11-service desktop the serial console exceeded the browser's first paint;
+the concurrent version answers in about 1.9 s. Results are sorted back into
+config order so cards never jump between refreshes. A skeleton grid and a
+cheap `GET /api/config` (no probes) fill the first paint while discovery
+and `/api/state` run in parallel.
 
 Other bounds:
 
@@ -222,7 +234,7 @@ button actions. It has no CDN, external font, or third-party JS. The offline
 
 ## 9. Test strategy
 
-142 tests in 13 files. Real loopback sockets and real subprocesses are used
+156 tests in 14 files. Real loopback sockets and real subprocesses are used
 where a fake would hide the bug; pure logic uses monkeypatched fixtures.
 
 | File | Tests | What it locks |
@@ -230,6 +242,7 @@ where a fake would hide the bug; pure logic uses monkeypatched fixtures.
 | `test_cli.py` | 14 | Command routing, `--config` on either side of the subcommand, init, html, history, logs |
 | `test_discover.py` | 23 | Product fingerprints against real loopback servers, canary executability, append-only writes, forged-candidate rejection, CLI and console routes |
 | `test_ui.py` | 20 | Real loopback console: routing, first-run config, service editing, sweep, timeline, report, stop |
+| `test_manage.py` | 14 | Full dashboard controls, aggregate payload, config export, per-service update/pause/delete, heartbeat, log redaction, resident watch, concurrent evidence collection |
 | `test_watchdog.py` | 10 | Cooldown persistence, network-down suspension, pause gates, alert storms, clock skew, explicit empty gate with a simulated outage |
 | `test_regressions.py` | 10 | README-example canary reaching L4, bounded reads, one request per canary, defaults merging, config path isolation, three netstat dialects, unknown-PID tolerance |
 | `test_safeio.py` | 9 | Atomic replace, backups, lease conflicts, baseline hash across renewal |
@@ -244,7 +257,7 @@ The wheel install and the frozen exe are exercised separately in first-run
 smoke runs from a clean directory with Python removed from `PATH`.
 
 ```bash
-python -m pytest -q              # 142 passed
+python -m pytest -q              # 156 passed
 python -m compileall -q src tests
 python -m build
 python -m twine check dist/*

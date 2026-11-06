@@ -7,6 +7,7 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=['fleetkeeper.ui', 'fleetkeeper.cli', 'fleetkeeper.watchdog',
+                   'fleetkeeper.page', 'fleetkeeper.manage',
                    'fleetkeeper.discover'],
     hookspath=[],
     hooksconfig={},

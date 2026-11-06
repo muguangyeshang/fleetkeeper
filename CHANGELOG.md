@@ -5,7 +5,51 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 
 ## Unreleased
 
+_No changes yet._
+
+## 0.2.0 - 2026-11-06
+
 ### Improvements
+- Discovery now knows what the config already contains. `discover.scan()`
+  takes `existing_ports`, marks those rows `configured` and clears their
+  `recommended` flag, so the console cannot offer the same port twice and the
+  registry stops growing duplicates on every rescan. The sidebar lists only
+  rows that still need a decision and folds the rest behind
+  "展开 N 个已在配置里的".
+- Card grid is column-count aware again (300 px minimum), cards in a row are
+  equal height with the action row pinned to the bottom, evidence is clamped
+  to two lines with the full text in a tooltip, and the L0-L4 codes are
+  rendered as words ("没上报" / "只有协议响应") instead of raw enum values.
+- The sidebar discovery list scrolls inside a fixed box and keeps its
+  expand/collapse toggle outside the scroll area, so the toggle is reachable
+  without scrolling past 40 rows.
+- The browser console is now a full dashboard instead of a status page.
+  `page.py` holds the self-contained HTML/CSS/JS (zero external assets):
+  a six-metric KPI strip, service cards with a five-step L0-L4 ladder and
+  per-card actions, a filterable event timeline, an alert list, and a sidebar
+  with discovery results, quick add, scenario picker, redacted config viewer
+  and per-service log tail. `ui.py` shrank from 834 to 508 lines and is now
+  only an HTTP router.
+- `manage.py` is the new console-facing management layer: concurrent evidence
+  collection, aggregate metrics, service lifecycle edits, deadman heartbeat
+  injection, redacted log reads, alert history, notification tests and an
+  opt-in in-process resident watchdog. Every function takes an explicit
+  config path; no module-level mutable fleet state.
+- New endpoints: `GET /api/overview`, `/api/watch`, `/api/alerts`,
+  `/api/logs`, `/api/check`, `/api/config?view=full[&download=1]`;
+  `POST /api/check`, `/api/heartbeat`, `/api/service/update`,
+  `/api/service/action`, `/api/watch`, `/api/notify-test`. Config writes are
+  whitelisted: no recovery command, alert webhook, absolute path or external
+  URL can enter through the browser. Pausing moves a service to
+  `registry.paused`, which the watchdog already ignores.
+- "开启常驻守护" runs the same `watchdog.run()` as the CLI and the cron entry
+  inside the console process, at a configurable 5-3600 s interval, and
+  reports run count and last error on the page. No terminal needed.
+- `/api/state` grades all services in a bounded 8-worker pool. An 11-service
+  desktop went from a first paint that never arrived (serial probes exceeded
+  the browser's patience) to about 1.9 s. A skeleton grid plus a probe-free
+  `GET /api/config` fill the first screen while state and discovery run in
+  parallel; results are restored to config order so cards do not jump.
 - Automatic discovery replaces the last manual first-run step. `discover.py`
   enumerates local listening ports, fingerprints Ollama / Ollama-compatible
   proxies, OpenAI-compatible endpoints (LM Studio, vLLM, LocalAI, gateways),
@@ -26,8 +70,8 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   "问题 0 条" beside a red L0 card looked like a bug, so the console now
   says so explicitly after a sweep when any card is still L0/L1/L2.
 - Component-level acceptance harnesses: `scripts/component_acceptance.py`
-  (46 checks over every HTTP route, write paths, error paths and utilities
-  on a throwaway server) and `scripts/verify_console_errors.js` (14 checks
+  (76 checks over every HTTP route, write paths, error paths and utilities
+  on a throwaway server) and `scripts/verify_console_errors.js` (19 checks
   executing the page's own JS in a DOM stub).
 - A dead-process diagnosis path in the browser console: `GET /api/ping` is a
   config-free, probe-free liveness endpoint. On a failed `/api/state` the page
@@ -112,6 +156,18 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   of a second inline copy.
 
 ### Bug Fixes
+- Two panels could listen on the same `127.0.0.1:port`. Python's
+  `HTTPServer` sets `SO_REUSEADDR`, which on Windows lets a second process
+  bind an address that is already being served: the browser kept talking to
+  the older instance and the freshly started panel looked broken (acceptance
+  caught two live listeners on 8871). `ConsoleServer` now binds with
+  `SO_EXCLUSIVEADDRUSE` on Windows, and a taken port exits with
+  "端口 N 已经被别的程序占用" plus a suggested next port instead of a
+  traceback.
+- An oversized POST body (>64 KiB) was rejected with 413 while the client was
+  still writing. On Windows the socket reset surfaced as `Failed to fetch`
+  instead of the real 413, making the acceptance harness flaky. The handler
+  now drains the body before replying.
 - A POST body that parsed as JSON but was not an object (array / string /
   number / null) reached `body.get(...)` and returned 500. It is now a clean
   400 with "请求体必须是 JSON 对象"; `test_ui.py` locks all four shapes.

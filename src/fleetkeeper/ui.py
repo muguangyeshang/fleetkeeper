@@ -15,6 +15,7 @@ from the network. All payloads crossing the HTTP boundary are redacted.
 """
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import cli as cli_mod
-from . import discover, evidence, heartbeat, history, redact, safeio, template, watchdog
+from . import discover, history, manage, redact, safeio, template, watchdog
 from . import report as report_mod
 
 MAX_BODY_BYTES = 65536
@@ -31,441 +32,9 @@ POLL_SECONDS = 5
 PLACEHOLDER_KEY = "example"
 PLACEHOLDER_NAME = "Example Service"
 
-PAGE = """<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>服务守护面板 · FleetKeeper</title>
-<style>
-:root{--bg:#f5f6f8;--card:#fff;--ink:#1f2329;--sub:#6b7280;--line:#e5e7eb;
---ok:#16794a;--warn:#9a6700;--bad:#b42318;--brand:#2563eb}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
- font:15px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-header{background:#fff;border-bottom:1px solid var(--line);padding:20px 28px;
- display:flex;align-items:center;flex-wrap:wrap;gap:12px}
-header h1{font-size:20px;margin:0;font-weight:650}
-header p{margin:0;color:var(--sub);font-size:13px}
-#conn{font-size:12px;color:var(--ok);background:#eaf7ef;
- padding:4px 10px;border-radius:20px}
-#conn.off{color:var(--bad);background:#fdecea}
-#conn.stopped{color:var(--sub);background:#f1f2f4}
-.msg.err{color:var(--bad)}
-button:disabled{opacity:.5;cursor:default}
-main{max-width:1080px;margin:0 auto;padding:22px 20px 60px}
-section{margin-bottom:24px}
-h2{font-size:16px;margin:0 0 12px;font-weight:650}
-.bar{background:#fff;border:1px solid var(--line);border-radius:12px;
- padding:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-button{font:inherit;font-size:14px;padding:9px 16px;border-radius:8px;
- border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
-button:hover{border-color:var(--brand);color:var(--brand)}
-button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
-button.primary:hover{opacity:.9;color:#fff}
-button.danger{margin-left:auto;color:var(--bad)}
-label{font-size:13px;color:var(--sub);display:flex;align-items:center;gap:6px}
-.msg{min-height:22px;margin:10px 2px 0;color:var(--brand);font-size:13px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
- padding:16px;border-left:4px solid var(--line)}
-.card.ok{border-left-color:var(--ok)}.card.warn{border-left-color:var(--warn)}
-.card.bad{border-left-color:var(--bad)}
-.card .name{font-weight:650;font-size:15px;word-break:break-all}
-.card .port{color:var(--sub);font-size:13px;margin-left:6px}
-.card .level{margin-top:10px;font-size:13px}
-.card .detail{color:var(--sub);font-size:12px;margin-top:6px;word-break:break-all}
-.card .issue{color:var(--bad);font-size:12px;margin-top:8px;word-break:break-all}
-.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}
-form{display:flex;flex-wrap:wrap;gap:10px}
-input{font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);
- border-radius:8px;background:#fff;color:var(--ink)}
-input[name=name]{flex:2;min-width:180px}input[name=port]{flex:1;min-width:130px}
-select{font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);
- border-radius:8px;background:#fff;color:var(--ink);max-width:100%}
-.hint{color:var(--sub);font-size:12px;margin:10px 0 0;word-break:break-all}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
-th{color:var(--sub);font-weight:500}
-td.msg-cell{word-break:break-all}
-.empty{color:var(--sub);font-size:13px;padding:10px 0}
-details{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-summary{cursor:pointer;font-weight:600;font-size:14px}
-details p{color:var(--sub);font-size:13px;margin:10px 0 0}
-code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
-</style>
-</head>
-<body>
-<header>
-  <h1>服务守护面板</h1>
-  <p>只在你自己的电脑上运行 · 不上传任何数据 · 关掉程序窗口即停止</p>
-  <button id="btn-reconnect" style="display:none;margin-left:auto;padding:5px 12px;font-size:12px">重新连接</button>
-  <span id="conn">已连接</span>
-</header>
-<main>
-  <section class="panel" id="discover-panel">
-    <h2>自动识别本机服务</h2>
-    <p class="hint" id="discover-text">正在找你电脑上已经跑着的服务，不用自己填名字和端口…</p>
-    <div class="bar" style="border:0;border-radius:0;padding:8px 0;gap:8px">
-      <button id="btn-discover">重新扫描</button>
-      <button class="primary" id="btn-discover-add">把勾中的加进配置</button>
-      <span class="hint" id="discover-note" style="margin:0"></span>
-    </div>
-    <div id="discover-list"></div>
-  </section>
-
-  <section class="panel" id="intro">
-    <h2>备选：手动选一个场景</h2>
-    <p class="hint" id="intro-text"></p>
-    <form id="preset-form">
-      <select id="preset-select" name="preset"></select>
-      <button class="primary" type="submit">套用场景</button>
-    </form>
-    <p class="hint" id="preset-detail"></p>
-  </section>
-
-  <section class="bar">
-    <button class="primary" id="btn-check">立即体检</button>
-    <button id="btn-sweep">跑一次守护</button>
-    <button id="btn-report">打开完整报告</button>
-    <label><input type="checkbox" id="auto" checked> 每 5 秒自动刷新</label>
-    <button class="danger" id="btn-stop">停止程序</button>
-  </section>
-  <p class="msg" id="msg"></p>
-
-  <section>
-    <h2>我的服务 <span id="count" style="color:#6b7280;font-weight:400"></span></h2>
-    <div class="grid" id="cards"></div>
-  </section>
-
-  <section class="panel">
-    <h2>添加 / 修改服务</h2>
-    <form id="add">
-      <input name="name" placeholder="服务名称，例如 网关" maxlength="64" required>
-      <input name="port" type="number" min="1" max="65535" placeholder="端口，例如 8080" required>
-      <button class="primary" type="submit">保存</button>
-    </form>
-    <p class="hint">端口就是访问服务时网址里冒号后面的数字（例如 <code>http://127.0.0.1:8080</code> 里的 8080）。
-    同名服务会更新端口；第一次保存时会自动替换掉占位的示例服务。配置文件：<code id="cfgpath">-</code></p>
-  </section>
-
-  <section class="panel">
-    <h2>最近发生了什么</h2>
-    <table><thead><tr><th>时间</th><th>类型</th><th>服务</th><th>说明</th></tr></thead>
-      <tbody id="timeline"></tbody></table>
-    <p class="empty" id="tl-empty">还没有记录。点一下「跑一次守护」就会记一条。</p>
-  </section>
-
-  <details>
-    <summary>这是什么 / 我该干什么</summary>
-    <p>1. 先把你自己的服务跑起来，页面打开时会自动扫描本机端口，识别到 Ollama、OpenAI 兼容接口、ComfyUI 这类服务会直接写进配置；没认出来的可以勾上手动加入，或者自己填名字和端口。</p>
-    <p>2. 点「立即体检」看它活没活。显示红色表示没找到进程或端口不通，先去检查服务本身。</p>
-    <p>3. 点「跑一次守护」会做一次检查：真挂了就按配置拉起来，断网时不会乱拉，出事发通知。</p>
-    <p>4. 「最近发生了什么」能查到每次检查和每条告警，用来回答「昨晚四点为什么挂」。</p>
-    <p>想让它一直盯着：在命令行执行 <code>fleetkeeper watch --interval 60</code>；也可以把这个命令放进系统的定时任务。</p>
-  </details>
-</main>
-<script>
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
- return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function say(t,err){
- var m=document.getElementById('msg');
- m.textContent=t;m.className=err?'msg err':'msg';
-}
-function explain(e){
- var m=String(e&&e.message||e||'');
- if(m==='SERVICE_DOWN')return '连不上本机服务了：程序窗口被关掉，或刚才点了「停止程序」。重新双击 fleetkeeper.exe，用新窗口里打印的网址打开本页。';
- if(m==='BAD_JSON')return '这个端口回的不是本程序的 JSON，可能被别的程序占用了。';
- if(m.indexOf('HTTP ')===0)return '服务还在，但这次没读到状态（'+m+'）。';
- return m;
-}
-function tone(level){
- var s=String(level||'');
- if(s.indexOf('L4')===0||s.indexOf('L3')===0)return 'ok';
- if(s.indexOf('L2')===0)return 'warn';
- return 'bad';
-}
-function stamp(ts){
- if(!ts)return '-';
- var d=new Date(ts*1000),p=function(n){return n<10?'0'+n:''+n;};
- return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+
-   p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())+
-   '.'+String(d.getMilliseconds()).padStart(3,'0');
-}
-function api(path,opts){
- // Only the network layer is normalised here: a stopped exe yields TypeError
- // "Failed to fetch". HTTP errors and bad JSON are different failures with
- // different fixes, so they keep their own labels.
- return fetch(path,opts||{}).catch(function(e){
-   var err=new Error('SERVICE_DOWN');err.cause=e;throw err;
- }).then(function(r){
-   if(!r.ok){
-     return r.text().then(function(t){
-       var detail='';
-       try{detail=(JSON.parse(t)||{}).error||'';}catch(_){}
-       throw new Error('HTTP '+r.status+(detail?'：'+detail:''));
-     });
-   }
-   return r.json().catch(function(pe){
-     var err=new Error('BAD_JSON');err.cause=pe;throw err;
-   });
- });
-}
-var presetData=[],isPlaceholder=true,lastState=null;
-var pollTimer=null,stopped=false,inFlight=false,failures=0,MAX_FAILURES=3;
-var discoveryDone=false,discoveryBusy=false,discoveryData=[];
-function setConn(text,cls){
- var c=document.getElementById('conn');c.textContent=text;c.className=cls||'';
-}
-function showReconnect(on){
- document.getElementById('btn-reconnect').style.display=on?'':'none';
-}
-function startPoll(){
- if(pollTimer)return;
- pollTimer=setInterval(function(){
-   if(document.getElementById('auto').checked&&!stopped&&!inFlight)refresh();
- },5000);
-}
-function pausePoll(){
- if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
- showReconnect(true);
-}
-// /api/ping touches no config, no port probes and no network: it is the
-// cheapest way to tell "the exe is gone" from "state() threw an exception".
-function diagnose(){
- return api('/api/ping').then(function(){return 'ALIVE';},
-                             function(){return 'DOWN';});
-}
-function stopUI(){
- stopped=true;
- if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
- showReconnect(false);
- setConn('已停止','stopped');
- say('已停止，可以关掉程序窗口了。以后要用，重新双击 fleetkeeper.exe，用新窗口里打印的网址打开。');
- var ids=['btn-check','btn-sweep','btn-report','btn-stop',
-          'btn-discover','btn-discover-add'];
- for(var i=0;i<ids.length;i++)document.getElementById(ids[i]).disabled=true;
-}
-function renderPresets(st){
- isPlaceholder=!!st.is_placeholder;
- document.getElementById('intro-text').textContent=isPlaceholder?
-  '程序会自动识别本机服务并写进配置。占位示例服务显示红色是正常现象，不是程序坏了。没识别到时再选一个接近你电脑情况的场景，或者直接在下面填端口。':
-  '想换一套起始服务，可以在这里套用。套用会覆盖当前的服务列表。';
- presetData=st.presets||[];
- var sel=document.getElementById('preset-select'),h='';
- for(var i=0;i<presetData.length;i++){
-  h+='<option value="'+esc(presetData[i].name)+'">'+esc(presetData[i].label)+'</option>';
- }
- sel.innerHTML=h;
- showPresetDetail();
-}
-function showPresetDetail(){
- var sel=document.getElementById('preset-select'),d=null;
- for(var i=0;i<presetData.length;i++){if(presetData[i].name===sel.value)d=presetData[i];}
- if(!d)return;
- var parts=[];
- for(var j=0;j<d.services.length;j++){
-  parts.push(d.services[j].name+' :'+d.services[j].port);
- }
- document.getElementById('preset-detail').textContent='会写入 '+parts.join('、')+'。端口按你自己的实际情况改。';
-}
-function renderDiscovery(res){
- discoveryData=(res&&res.candidates)||[];
- var box=document.getElementById('discover-list'),h='';
- var txt='扫描了 '+((res&&res.scanned_ports||[]).length)+' 个本机端口，认出 '+
-         discoveryData.length+' 个服务（'+(res&&res.elapsed_ms||0)+' 毫秒）。';
- if(res&&res.auto_applied)txt+=' 已自动加入 '+res.auto_applied+' 个。';
- document.getElementById('discover-text').textContent=txt;
- document.getElementById('discover-note').textContent=
-   '「确定」默认勾上；「待确认」要你自己勾，加错了可以在下面改端口。';
- if(!discoveryData.length){
-  box.innerHTML='<p class="empty">没有识别到正在运行的 HTTP 服务。先把服务启动起来再点「重新扫描」，或者在下面手动填一个端口。</p>';
-  return;
- }
- h='<table><thead><tr><th>加入</th><th>识别结果</th><th>端口</th><th>依据</th></tr></thead><tbody>';
- for(var i=0;i<discoveryData.length;i++){
-  var c=discoveryData[i],tag=c.confidence==='high'?'确定':(c.confidence==='medium'?'可能':'待确认');
-  h+='<tr><td><input type="checkbox" id="disc-chk-'+i+'"'+(c.recommended?' checked':'')+'></td>'+
-     '<td>'+esc(c.name)+'<br><span class="hint">'+tag+'</span></td>'+
-     '<td>:'+esc(c.port)+'</td><td class="msg-cell">'+esc(c.evidence)+'</td></tr>';
- }
- box.innerHTML=h+'</tbody></table>';
-}
-function selectedIds(){
- var ids=[];
- for(var i=0;i<discoveryData.length;i++){
-  var box=document.getElementById('disc-chk-'+i);
-  if(box&&box.checked)ids.push(discoveryData[i].id);
- }
- return ids;
-}
-function runDiscovery(auto){
- if(discoveryBusy||stopped)return Promise.resolve(false);
- discoveryBusy=true;
- // auto = first open with a placeholder config: scan AND write the confident
- // rows in one round trip. Otherwise the GET is read-only.
- var call=auto?post('/api/discover',{auto:true}):api('/api/discover');
- return call.then(function(res){
-  discoveryBusy=false;discoveryDone=true;renderDiscovery(res);
-  if(auto&&res.auto_applied){
-   say('已自动识别并加入 '+res.auto_applied+' 个服务，不用再手填端口。');
-   return refresh().then(function(){return true;});
-  }
-  return true;
- }).catch(function(e){
-  discoveryBusy=false;discoveryDone=true;
-  document.getElementById('discover-text').textContent='这次没扫成，服务列表不受影响。';
-  if(!auto)say('识别失败：'+explain(e),true);
-  return false;   // never bury a better state() error on the first load
- });
-}
-function render(st){
- renderPresets(st);
- setConn('已连接 · '+esc(st.generated_at||''),'');
- document.getElementById('cfgpath').textContent=esc(st.config_path||'-');
- var svcs=st.services||[];
- document.getElementById('count').textContent='('+svcs.length+')';
- var html='';
- for(var i=0;i<svcs.length;i++){
-   var s=svcs[i],t=tone(s.level);
-   var label=t==='ok'?'正常':(t==='warn'?'部分正常':'未通过');
-   html+='<div class="card '+t+'">'+
-     '<div><span class="name">'+esc(s.name)+'</span><span class="port">:'+esc(s.port)+'</span></div>'+
-     '<div class="level"><b style="color:var(--'+(t==='ok'?'ok':t==='warn'?'warn':'bad')+')">'+label+'</b> · '+esc(s.level)+'</div>'+
-     '<div class="detail">心跳：'+esc(s.heartbeat)+' · 进程：'+esc((s.pids||[]).join(',')||'无')+'</div>';
-   for(var j=0;j<(s.issues||[]).length&&j<3;j++){
-     html+='<div class="issue">'+esc(s.issues[j])+'</div>';
-   }
-   html+='</div>';
- }
- if(!svcs.length)html='<div class="empty">还没有配置服务。在下面填一个名字和端口就行。</div>';
- document.getElementById('cards').innerHTML=html;
-
- var rows=st.history||[],tl='';
- for(var k=0;k<rows.length&&k<10;k++){
-   var r=rows[k];
-   tl+='<tr><td>'+stamp(r.ts)+'</td><td>'+esc(r.kind)+'</td><td>'+
-       esc(r.service||'fleet')+(r.port?':'+esc(r.port):'')+'</td>'+
-       '<td class="msg-cell">'+esc(r.message||'')+'</td></tr>';
- }
- document.getElementById('timeline').innerHTML=tl;
- document.getElementById('tl-empty').style.display=rows.length?'none':'block';
-}
-function refresh(){
- if(stopped)return Promise.resolve(false);
- if(inFlight)return Promise.resolve(false);   // never stack slow probes
- inFlight=true;
- return api('/api/state').then(function(st){
-   inFlight=false;failures=0;
-   lastState=st;render(st);showReconnect(false);startPoll();
-   // First successful load discovers the fleet once. A placeholder config
-   // also gets the confident rows written automatically: zero typing.
-   if(!discoveryDone)runDiscovery(!!st.is_placeholder);
-   return true;
- }).catch(function(e){
-   inFlight=false;
-   return diagnose().then(function(kind){
-     var msg;
-     if(kind==='DOWN'){
-       msg='读取失败：连不上本机服务了。程序窗口可能已被关掉，或刚才点了「停止程序」。'
-          +'重新双击 fleetkeeper.exe，用新窗口里打印的网址打开本页（每次启动端口都会变，旧网址作废）。';
-       setConn('服务已退出','off');
-     }else{
-       msg='读取失败：服务还在，但状态读取出错（'+explain(e)+'）。等几秒重试，或看程序窗口里的报错。';
-       setConn('状态异常','off');
-     }
-     failures++;
-     if(failures>=MAX_FAILURES){
-       msg+=' 自动刷新已暂停：程序恢复后可点右上角「重新连接」；如果已经重启过 exe，请直接关掉这个旧标签页。';
-       pausePoll();
-     }
-     say(msg,true);
-     return false;
-   });
- });
-}
-function post(path,body){
- return api(path,{method:'POST',headers:{'Content-Type':'application/json'},
-                  body:JSON.stringify(body||{})});
-}
-document.getElementById('btn-check').onclick=function(){
- say('正在体检…');refresh().then(function(ok){if(ok)say('体检完成。');});
-};
-document.getElementById('btn-reconnect').onclick=function(){
- stopped=false;failures=0;
- say('正在重新连接…');
- refresh().then(function(ok){if(ok){say('已重新连上。');startPoll();}});
-};
-document.getElementById('btn-sweep').onclick=function(){
- say('正在跑一次守护…');
- post('/api/sweep').then(function(r){
-   var parts=[];
-   parts.push('问题 '+((r.issues||[]).length)+' 条');
-   parts.push('已恢复 '+((r.healed||[]).length)+' 个');
-   parts.push('告警 '+((r.alerts||[]).length)+' 条');
-   if(r.network_down)parts.push('网络断开：本次不自愈');
-   var msg='守护完成：'+parts.join(' · ');
-   return refresh().then(function(ok){
-     // A sweep only checks processes and ports; the cards grade business
-     // evidence. "0 issues" beside a red card looks like a bug, so spell
-     // out that the two are answering different questions.
-     if(ok&&lastState&&!(r.issues||[]).length){
-       var bad=0,list=lastState.services||[];
-       for(var i=0;i<list.length;i++){
-         if(/^L[012]/.test((list[i]||{}).level||''))bad++;
-       }
-       if(bad)msg+='。守护只查进程和端口：下面还有 '+bad+' 张未通过的卡片，是业务探针没过，不用重启程序。';
-     }
-     if(ok)say(msg);       // a failed refresh already wrote the better message
-   });
- }).catch(function(e){say('守护失败：'+explain(e),true);});
-};
-document.getElementById('btn-report').onclick=function(){window.open('/report','_blank');};
-document.getElementById('btn-stop').onclick=function(){
- if(!confirm('停止后这个页面就不能用了，确定吗？'))return;
- say('正在停止…');
- // shutdown() may kill the socket before the response is flushed, so both
- // the success and the failure branch mean the same thing to this page.
- post('/api/stop').then(stopUI,stopUI);
-};
-document.getElementById('btn-discover').onclick=function(){
- say('正在识别本机服务…');
- runDiscovery(false).then(function(ok){
-  if(ok)say('识别完成：'+discoveryData.length+' 个候选服务。勾上要加的，再点「把勾中的加进配置」。');
- });
-};
-document.getElementById('btn-discover-add').onclick=function(){
- var ids=selectedIds();
- if(!ids.length){say('先在上面勾中要加入的服务。');return;}
- say('正在写入配置…');
- post('/api/discover',{ids:ids}).then(function(r){
-  say(r.message||'已写入配置');renderDiscovery(r);return refresh();
- }).catch(function(e){say('写入失败：'+explain(e),true);});
-};
-document.getElementById('preset-select').onchange=showPresetDetail;
-document.getElementById('preset-form').onsubmit=function(ev){
- ev.preventDefault();
- var name=document.getElementById('preset-select').value;
- if(!isPlaceholder&&!confirm('套用场景会覆盖当前的服务列表，确定吗？'))return;
- say('正在套用场景…');
- post('/api/preset',{name:name,force:true}).then(function(r){
-   say(r.message||'已套用场景');return refresh();
- }).catch(function(e){say('套用失败：'+explain(e),true);});
-};
-document.getElementById('add').onsubmit=function(ev){
- ev.preventDefault();
- var f=ev.target,name=f.name.value.trim(),port=parseInt(f.port.value,10);
- if(!name||!port){say('名字和端口都要填。');return;}
- post('/api/service',{name:name,port:port}).then(function(r){
-   say(r.message||'已保存');f.name.value='';f.port.value='';return refresh();
- }).catch(function(e){say('保存失败：'+explain(e),true);});
-};
-startPoll();
-refresh();
-</script>
-</body>
-</html>
-"""
+# The complete self-contained HTML page lives in page.py.
+# Re-exported here so `from fleetkeeper.ui import PAGE` keeps working.
+from .page import PAGE  # noqa: E402
 
 
 def ensure_config(path):
@@ -499,25 +68,29 @@ def _load(path):
 
 
 def _services_summary(path):
-    """Reuse the CLI's ladder logic so the page and the terminal never disagree."""
+    """Same ladder as the CLI, collected concurrently in manage.py.
+
+    A serial loop made an 11-service dashboard take longer than the browser's
+    first paint, which is why the page looked empty on open.
+    """
     cfg = _load(path)
-    rows = []
-    for key, svc in cli_mod._registry(cfg).items():
-        ev = evidence.evaluate_service(svc)
-        hb = heartbeat.evaluate(key, int(svc.get("heartbeat_period") or 60),
-                                directory=cli_mod._hb_dir(cfg, path))
-        rows.append({
-            "key": key,
-            "name": svc["name"],
-            "port": svc.get("port"),
-            "level": ev["level_name"],
-            "pids": ev.get("pids", []),
-            "heartbeat": hb["status"],
-            "hb_age": hb.get("age_seconds"),
-            "evidence": ev["evidence"],
-            "issues": [redact.redact(str(i)) for i in ev["issues"]],
-        })
-    return cfg, rows
+    return cfg, manage.evaluate_rows(cfg, path)
+
+
+def _configured_ports(path):
+    """Ports already saved in fleet.json. A broken config returns [] on
+    purpose: discovery must still work when the config cannot be parsed."""
+    try:
+        cfg = _load(path)
+        out = []
+        for svc in cli_mod._registry(cfg).values():
+            try:
+                out.append(int(svc.get("port")))
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception:
+        return []
 
 
 def _history_rows(cfg, path, limit=12):
@@ -555,9 +128,18 @@ def apply_preset(path, name, force=False):
     return "已套用场景 {}，共 {} 个服务。端口按你自己的实际情况改。".format(name, count)
 
 
-def state(path):
-    """One JSON payload for the whole page. No secrets are included."""
+def state(path, server=None):
+    """One JSON payload for the whole page. No secrets are included.
+
+    `overview` carries the KPI strip, recent alerts and the resident-watch
+    status. It deliberately does not carry the raw `watchdog` block: webhook
+    URLs and recovery commands never cross the HTTP boundary.
+    """
     cfg, rows = _services_summary(path)
+    started = getattr(server, "fk_started", None) if server else None
+    loop = getattr(server, "fk_watch", None) if server else None
+    watch = loop.status() if loop else {}
+    ov = manage.overview(cfg, path, rows, started=started, watch=watch)
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "config_path": os.path.abspath(path),
@@ -566,6 +148,8 @@ def state(path):
         "service_count": len(rows),
         "is_placeholder": _is_placeholder(cfg),
         "presets": template.preset_list(),
+        "overview": ov,
+        "service_details": manage.service_details(cfg, path),
     }
 
 
@@ -648,7 +232,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         # Serving every asset to stderr makes the console window unreadable.
         pass
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8",
+              headers=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
@@ -656,6 +241,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -673,6 +260,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     def cfg_path(self):
         return self.server.fk_config
 
+    def _one_service(self, key):
+        cfg = _load(self.cfg_path)
+        return {"row": manage.evaluate_one(cfg, self.cfg_path, key),
+                "checked_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
     def do_GET(self):
         parsed = urlparse(self.path)
         route = parsed.path.rstrip("/") or "/"
@@ -689,7 +281,42 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if route == "/report":
                 return self._html(report_mod.render(doctor_report(self.cfg_path)))
             if route == "/api/state":
-                return self._json(state(self.cfg_path))
+                return self._json(state(self.cfg_path, self.server))
+            if route == "/api/overview":
+                cfg = _load(self.cfg_path)
+                rows = manage.evaluate_rows(cfg, self.cfg_path)
+                loop = getattr(self.server, "fk_watch", None)
+                return self._json(manage.overview(
+                    cfg, self.cfg_path, rows,
+                    started=getattr(self.server, "fk_started", None),
+                    watch=loop.status() if loop else {}))
+            if route == "/api/watch":
+                loop = getattr(self.server, "fk_watch", None)
+                return self._json(loop.status() if loop else {"running": False})
+            if route == "/api/alerts":
+                q = parse_qs(parsed.query)
+                try:
+                    limit = max(1, min(manage.MAX_ALERT_LINES,
+                                       int((q.get("limit") or ["20"])[0])))
+                except (TypeError, ValueError):
+                    return self._json({"error": "limit 必须是数字"}, 400)
+                return self._json({"rows": manage.alerts(
+                    _load(self.cfg_path), self.cfg_path, limit=limit)})
+            if route == "/api/logs":
+                q = parse_qs(parsed.query)
+                key = (q.get("service") or [""])[0]
+                if not key:
+                    return self._json({"error": "要指定 service"}, 400)
+                try:
+                    tail = int((q.get("tail") or ["40"])[0])
+                except (TypeError, ValueError):
+                    return self._json({"error": "tail 必须是数字"}, 400)
+                return self._json(manage.read_log(
+                    self.cfg_path, key, tail=tail,
+                    raw=(q.get("raw") or ["0"])[0] in ("1", "true", "yes")))
+            if route == "/api/check":
+                q = parse_qs(parsed.query)
+                return self._json(self._one_service((q.get("key") or [""])[0]))
             if route == "/api/history":
                 q = parse_qs(parsed.query)
                 cfg = _load(self.cfg_path)
@@ -707,11 +334,24 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 return self._json({"rows": rows, "count": history.count(db)})
             if route == "/api/config":
                 cfg = _load(self.cfg_path)
-                return self._json({"config_path": os.path.abspath(self.cfg_path),
-                                   "services": [
-                                       {"key": k, "name": v.get("name"),
-                                        "port": v.get("port")}
-                                       for k, v in cli_mod._registry(cfg).items()]})
+                q = parse_qs(parsed.query)
+                if (q.get("view") or [""])[0] == "full":
+                    text = manage.export_config(cfg)
+                    if (q.get("download") or [""])[0] in ("1", "true", "yes"):
+                        return self._send(
+                            200, text, "application/json; charset=utf-8",
+                            {"Content-Disposition":
+                             'attachment; filename="fleet.json"'})
+                    return self._json({"text": text})
+                # The cheap read used by the page on first paint: no probes,
+                # no history query, no evidence collection.
+                return self._json({
+                    "config_path": os.path.abspath(self.cfg_path),
+                    "is_placeholder": _is_placeholder(cfg),
+                    "services": [
+                        {"key": k, "name": v.get("name"), "port": v.get("port")}
+                        for k, v in cli_mod._registry(cfg).items()],
+                    "paused": manage.service_details(cfg, self.cfg_path)})
             if route == "/api/presets":
                 return self._json({"presets": template.preset_list()})
             if route == "/api/discover":
@@ -723,7 +363,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 except (TypeError, ValueError):
                     timeout = discover.DEFAULT_TIMEOUT
                 res = discover.scan(
-                    exclude_ports={self.server.server_port}, timeout=timeout)
+                    exclude_ports={self.server.server_port}, timeout=timeout,
+                    existing_ports=_configured_ports(self.cfg_path))
                 self.server.fk_discovery = res
                 return self._json(res)
             return self._json({"error": "not found"}, 404)
@@ -737,6 +378,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         if length > MAX_BODY_BYTES:
+            # Drain the bytes before answering. Replying while the client is
+            # still writing resets the socket on Windows, and the browser
+            # reports "Failed to fetch" instead of the real 413.
+            try:
+                self.rfile.read(length)
+            except OSError:
+                pass
             return self._json({"error": "请求体过大"}, 413)
         raw = self.rfile.read(length) if length else b"{}"
         try:
@@ -754,6 +402,44 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if route == "/api/service":
                 msg = save_service(self.cfg_path, body.get("name"), body.get("port"))
                 return self._json({"ok": True, "message": msg})
+            if route == "/api/service/action":
+                action = str(body.get("action") or "")
+                key = body.get("key")
+                if action == "delete":
+                    msg = manage.delete_service(self.cfg_path, key)
+                elif action == "pause":
+                    msg = manage.set_paused(self.cfg_path, key, True)
+                elif action == "resume":
+                    msg = manage.set_paused(self.cfg_path, key, False)
+                else:
+                    return self._json({"error": "未知操作"}, 400)
+                return self._json({"ok": True, "message": msg})
+            if route == "/api/service/update":
+                msg = manage.update_service(
+                    self.cfg_path, body.get("key"), body.get("patch"))
+                return self._json({"ok": True, "message": msg})
+            if route == "/api/heartbeat":
+                msg = manage.write_heartbeat(
+                    self.cfg_path, body.get("key"),
+                    processed=body.get("processed"), ok=bool(body.get("ok", True)))
+                return self._json({"ok": True, "message": msg})
+            if route == "/api/check":
+                return self._json(self._one_service(body.get("key")))
+            if route == "/api/watch":
+                loop = getattr(self.server, "fk_watch", None)
+                if loop is None:
+                    return self._json({"error": "常驻守护不可用"}, 400)
+                action = str(body.get("action") or "")
+                if action == "stop":
+                    msg = loop.stop()
+                elif action == "start":
+                    msg = loop.start(body.get("interval", 60))
+                else:
+                    return self._json({"error": "未知操作"}, 400)
+                return self._json({"ok": True, "message": msg,
+                                   "watch": loop.status()})
+            if route == "/api/notify-test":
+                return self._json(manage.notify_test(self.cfg_path))
             if route == "/api/preset":
                 # Only a whitelisted preset name crosses this boundary; no raw
                 # config, path or command is accepted from the browser.
@@ -768,7 +454,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 candidates = cached.get("candidates") or []
                 if body.get("rescan") or not candidates:
                     res = discover.scan(
-                        exclude_ports={self.server.server_port})
+                        exclude_ports={self.server.server_port},
+                        existing_ports=_configured_ports(self.cfg_path))
                     self.server.fk_discovery = res
                     candidates = res["candidates"]
                 ids = body.get("ids")
@@ -782,6 +469,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 out["candidates"] = candidates
                 return self._json(out)
             if route == "/api/stop":
+                loop = getattr(self.server, "fk_watch", None)
+                if loop is not None:
+                    loop.stop()
                 # shutdown() must not be called from the serving thread itself.
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return self._json({"ok": True, "message": "stopping"})
@@ -792,16 +482,40 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._error(exc)
 
 
+class ConsoleServer(ThreadingHTTPServer):
+    """HTTP server that refuses to share its port.
+
+    Python's HTTPServer sets SO_REUSEADDR, which on Windows lets a *second*
+    process bind the exact same 127.0.0.1:port. Acceptance caught two live
+    listeners on one port: the browser then talked to the older instance and
+    the freshly started panel looked broken. Bind exclusively instead.
+    """
+
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            try:
+                self.socket.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except OSError:
+                pass
+        ThreadingHTTPServer.server_bind(self)
+
+
 def make_server(config_path, port=0):
     """Bind loopback only. port=0 lets the OS pick a free port."""
     path = os.path.abspath(config_path)
-    server = ThreadingHTTPServer(("127.0.0.1", port), ConsoleHandler)
+    server = ConsoleServer(("127.0.0.1", port), ConsoleHandler)
     server.daemon_threads = True
     server.fk_config = path
     server.fk_started = time.time()
     # Last scan result. POST /api/discover resolves the browser's ids against
     # this list instead of trusting a client-supplied service definition.
     server.fk_discovery = {}
+    # Opt-in resident sweep loop. Constructing it starts no thread; the page
+    # has to press "开启常驻守护" first.
+    server.fk_watch = manage.WatchLoop(path)
     return server
 
 
@@ -809,7 +523,18 @@ def serve(config_path, port=0, open_browser=True):
     """Blocking entry point. Returns 0 on a clean stop."""
     path = os.path.abspath(config_path)
     created = ensure_config(path)
-    server = make_server(path, port)
+    try:
+        server = make_server(path, port)
+    except OSError as exc:
+        # 10048 = WSAEADDRINUSE, 10013 = WSAEACCES (reserved/excluded port).
+        code = getattr(exc, "winerror", None) or exc.errno
+        if code in (10048, 10013, 48, 98, 13, 1):
+            print("端口 {} 已经被别的程序占用，面板没有启动。".format(port),
+                  flush=True)
+            print("换一个端口再试，例如：fleetkeeper start --port {}".format(
+                int(port) + 1 if port else 8799), flush=True)
+            return 2
+        raise
     url = "http://127.0.0.1:{}/".format(server.server_port)
     # flush=True: a frozen one-file exe writes to a pipe/console with block
     # buffering; without it the URL only appears after the process exits.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fleetkeeper"
-version = "0.1.1"
+version = "0.2.0"
 description = "Self-healing watchdog for local AI service fleets: network-gated healing with per-port cooldowns, deadman-switch heartbeats, L0-L4 canary probes, outbound alerts, an incident timeline, and an offline HTML status page. Pure standard library."
 readme = "README.md"
 requires-python = ">=3.8"

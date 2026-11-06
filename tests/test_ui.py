@@ -374,3 +374,31 @@ def test_start_no_browser_flag(tmp_path, monkeypatch):
     assert cli.main(["start", "--config", cfg, "--port", "8765",
                      "--no-browser"]) == 0
     assert seen == {"port": 8765, "open_browser": False}
+
+
+def test_console_refuses_to_share_its_port(tmp_path):
+    """Two live listeners on 127.0.0.1:port is a Windows-only failure mode:
+    with SO_REUSEADDR the newcomer binds, the browser keeps talking to the
+    older instance, and the fresh panel looks dead. Bind exclusively."""
+    cfg = tmp_path / "fleet.json"
+    safeio.atomic_write_text(str(cfg), template.render(template.default_config()))
+    first = ui.make_server(str(cfg), 0)
+    port = first.server_port
+    try:
+        with pytest.raises(OSError):
+            ui.make_server(str(cfg), port)
+    finally:
+        first.server_close()
+
+
+def test_serve_explains_a_taken_port(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "fleet.json"
+
+    def boom(path, port=0):
+        import errno as _e
+        raise OSError(_e.EADDRINUSE, "in use")
+
+    monkeypatch.setattr(ui, "make_server", boom)
+    assert ui.serve(str(cfg), port=8899, open_browser=False) == 2
+    out = capsys.readouterr().out
+    assert "已经被别的程序占用" in out and "8899" in out
