@@ -191,6 +191,8 @@ def sweep_event(summary):
         "healed": healed,
         "net_ok": not down,
         "network_down": down,
-        "message": "{} issue(s), {} healed, {} alert(s)".format(
+        # The console timeline and `fleetkeeper history` both print this
+        # string verbatim, so it is written once, in the language of the UI.
+        "message": "问题 {} 条 · 恢复 {} 个 · 告警 {} 条".format(
             len(issues), len(healed), len(summary.get("alerts") or [])),
     }

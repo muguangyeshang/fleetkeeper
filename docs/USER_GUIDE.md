@@ -445,7 +445,7 @@ Real output:
 ```
 $ fleetkeeper --config fleet.json history --last all
 TIME                    KIND    LEVEL     SERVICE                  ISSUES MESSAGE
-2026-11-06 18:13:32.784 sweep   warning   Dead Worker              1      1 issue(s), 0 healed, 0 alert(s)
+2026-11-06 18:13:32.784 sweep   warning   Dead Worker              1      问题 1 条 · 恢复 0 个 · 告警 0 条
 
 1 event(s) shown; total in db: 1. '--last all' shows everything.
 ```
