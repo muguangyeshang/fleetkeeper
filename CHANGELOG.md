@@ -6,6 +6,13 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- The scan now thinks before it labels. An unrecognised HTTP service used to
+  be added with health path `/`, which real gateways often answer with 404 --
+  the card turned red on its very first look. The scan already fetched the
+  product paths, so it now picks the best one that answered 2xx (e.g.
+  `/v1/models`) and marks the row medium confidence with the process image
+  shown, which low-confidence rows used to hide. On a real machine 7 of 24
+  unknown rows got a working health path for free.
 - Discovery is no longer AI-only. A third scan phase classifies well-known
   non-HTTP services (MySQL, Redis, PostgreSQL, MongoDB, Nginx, MinIO, SSH...)
   by process image plus a real TCP connect, including ports Docker Desktop

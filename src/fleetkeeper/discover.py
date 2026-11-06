@@ -324,6 +324,19 @@ def _candidate(port, results, hint):
         health_path = sig["health_path"]
         canary = copy.deepcopy(sig["canary"])
         evidence_text = rule["reason"]
+        # Unrecognised HTTP service: the root often 404s on real gateways,
+        # and a service added with a 404 health check turns red on its very
+        # first look. Phase 2 already paid for the product-path probes, so
+        # hand over a health path that actually answers.
+        if kind == "http":
+            for alt in ("/v1/models", "/api/tags", "/system_stats"):
+                r2 = results.get(alt)
+                if r2 and r2.get("ok") and 200 <= (r2.get("status") or 0) < 300:
+                    health_path = alt
+                    confidence = "medium"
+                    evidence_text += "；健康路径自动选为 {}（根路径 {}）".format(
+                        alt, res.get("status") or "?")
+                    break
         # A known process image is stronger evidence than a page body. When a
         # generic HTTP answer belongs to e.g. ollama.exe, promote it to the
         # product signature so it gets the right health path and canary.
@@ -358,9 +371,11 @@ def _candidate(port, results, hint):
             "name": label,
             "port": int(port),
             "pid": hint.get("pid"),
-            # Low-confidence rows are random local programs. Do not put their
-            # image names on the page: that is host-specific information.
-            "process": hint.get("process") if confidence != "low" else None,
+            # The console runs on the same machine as these processes; the
+            # image name is the single most useful clue a user has for an
+            # unfamiliar port. (Phase-1 reasoning about "host-specific
+            # information" was wrong for a local dashboard.)
+            "process": hint.get("process"),
             "confidence": confidence,
             "evidence": redact.redact(evidence_text)[:180],
             "health_path": health_path,
@@ -368,9 +383,8 @@ def _candidate(port, results, hint):
             "status": res.get("status"),
             "recommended": confidence == "high",
         }
-    # No product signature. A recognisable AI process with no HTTP answer is
-    # still worth offering (the user can fix the health path afterwards), but
-    # a random TCP listener is not.
+    # A recognisable AI process with no known HTTP answer is still worth
+    # offering (more specific than the generic fallback below).
     if hint.get("kind") and any(r.get("ok") for r in results.values() if r):
         label = hint["label"]
         return {
@@ -381,6 +395,36 @@ def _candidate(port, results, hint):
             "evidence": redact.redact("进程 {} 在监听，但没返回已知接口特征".format(
                 hint.get("process") or hint["kind"]))[:180],
             "health_path": "/", "canary": None, "status": None,
+            "recommended": False,
+        }
+
+    # Generic fallback. Pick the health path the smart way: phase 2 may have
+    # already found a 2xx path that is not "/" -- the root often 404s on real
+    # gateways, and a service added with a 404 health check turns red on its
+    # very first look. Prefer the JSON-shaped product endpoints, then any
+    # 2xx path, then "/".
+    def _best_path():
+        for path in ("/v1/models", "/api/tags", "/system_stats", "/"):
+            r = results.get(path)
+            if r and r.get("ok") and 200 <= (r.get("status") or 0) < 300:
+                return path, r
+        for path, r in results.items():
+            if r and r.get("ok") and 200 <= (r.get("status") or 0) < 300:
+                return path, r
+        return None, None
+
+    fpath, fres = _best_path()
+    if fres is not None:
+        proc_note = "；进程 {}".format(hint["process"]) if hint.get("process") else ""
+        return {
+            "id": "http-{}".format(port),
+            "kind": "http", "name": "未识别的 HTTP 服务", "port": int(port),
+            "pid": hint.get("pid"), "process": hint.get("process"),
+            "confidence": "medium",
+            "evidence": redact.redact(
+                "健康路径自动选为 {}（根路径不是 200）{}".format(fpath, proc_note))[:180],
+            "health_path": fpath, "canary": None,
+            "status": fres.get("status"),
             "recommended": False,
         }
     return None

@@ -519,3 +519,46 @@ def test_validate_still_rejects_a_tcp_canary_with_bad_shape():
         discover._validate({"id": "tcp-1", "kind": "tcp", "port": 1,
                             "health_path": None,
                             "canary": {"type": "gopher", "path": "/"}})
+
+
+def test_unknown_http_service_gets_a_working_health_path():
+    """A gateway that 404s on "/" used to be added with health path "/" and
+    turned red on its first look. The scan already fetched the product paths,
+    so it should hand over a health path that actually answers."""
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'{"ok": true}'
+            code = 404 if self.path == "/" else 200
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    port = srv.server_address[1]
+    try:
+        res = discover.scan(ports=[port], listener_map={})
+        cand = next(c for c in res["candidates"] if c["port"] == port)
+        assert cand["kind"] == "http" and cand["confidence"] == "medium"
+        assert cand["health_path"] != "/", cand
+        # the chosen path must be one the probe saw answer 2xx
+        assert cand["health_path"] in ("/v1/models", "/api/tags", "/system_stats")
+    finally:
+        srv.shutdown()
+
+
+def test_unknown_service_row_shows_the_process_name():
+    """The process image is the single most useful clue for an unfamiliar
+    port; hiding it made the row useless."""
+    results = {"/": {"ok": True, "status": 200, "reason": "", "bytes": 4,
+                     "snippet": "", "raw": b"<html>dev</html>", "error": None}}
+    hint = {"pid": 77, "process": "mystery_server.exe",
+            "kind": None, "label": None}
+    cand = discover._candidate(12345, results, hint)
+    assert cand is not None and cand["process"] == "mystery_server.exe"
