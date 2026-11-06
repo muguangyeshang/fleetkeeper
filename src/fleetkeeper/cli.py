@@ -23,6 +23,7 @@ import sys
 import time
 
 from . import discover, evidence, heartbeat, history, redact, safeio, template, watchdog
+from . import manage as manage_mod
 from . import report as report_mod  # cmd_doctor has a local variable named `report`
 
 
@@ -134,6 +135,28 @@ def cmd_doctor(args):
         elif hb["status"] in ("NO_HEARTBEAT", "ALIVE_ONLY", "PROTOCOL_ONLY"):
             report["uncovered"].append(item)
 
+    # --- environment: the panel itself, autostart, notify -----------------
+    env = []
+    cfg_path = os.path.abspath(args.config_path)
+    env.append({"key": "config", "ok": os.path.isfile(cfg_path),
+                "detail": cfg_path if os.path.isfile(cfg_path)
+                else "配置文件不存在：{}".format(cfg_path)})
+    try:
+        auto = manage_mod.autostart(cfg_path, "status")
+        env.append({"key": "autostart",
+                    "ok": True,
+                    "detail": auto.get("message") or
+                              ("已开启" if auto.get("installed") else "未开启")})
+    except Exception as exc:                     # POSIX: honest unsupported
+        env.append({"key": "autostart", "ok": True,
+                    "detail": str(exc)[:80]})
+    notify = manage_mod.get_notify_settings(cfg_path)
+    env.append({"key": "notify",
+                "ok": True,
+                "detail": "Webhook 已配置" if notify.get("webhook_url")
+                          else "Webhook 未配置（服务挂了不会通知你）"})
+    report["environment"] = env
+
     if args.html:
         _emit_html(report_mod.render(report), args.html)
         return 0
@@ -143,6 +166,9 @@ def cmd_doctor(args):
 
     print("fleetkeeper doctor  {}".format(report["generated_at"]))
     print("=" * 68)
+    for e in report.get("environment", []):
+        print("[{}] {:<11} {}".format("OK" if e["ok"] else "P0", e["key"], e["detail"]))
+    print("-" * 68)
     for item in report["services"]:
         if item in report["p0"]:
             flag = "P0"

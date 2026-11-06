@@ -217,3 +217,16 @@ def test_builtin_template_matches_repo_example_keys():
     assert set(builtin["watchdog"]) == set(shipped["watchdog"])
     assert set(builtin["watchdog"]["notify"]) == set(shipped["watchdog"]["notify"])
     assert set(builtin["registry"]["services"]) != set()
+
+
+def test_doctor_reports_the_environment(fake_fleet, capsys):
+    """A user who cannot open the console has a different problem from one
+    whose service is down; doctor must name the panel's own state too --
+    config path, autostart task, whether a webhook would fire."""
+    r = cli.main(["--config", fake_fleet, "doctor", "--json"])
+    assert r == 0
+    env = json.loads(capsys.readouterr().out)["environment"]
+    keys = {e["key"]: e for e in env}
+    assert keys["config"]["ok"] is True
+    assert keys["autostart"]["detail"]          # status text either way
+    assert "Webhook" in keys["notify"]["detail"]

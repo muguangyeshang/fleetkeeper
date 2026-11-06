@@ -6,6 +6,11 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `fleetkeeper doctor` now diagnoses the panel itself, not only the fleet:
+  the config path, whether the logon autostart task exists, and whether a
+  webhook would actually fire. A user who cannot open the console and a user
+  whose service is down now get different answers from the same command.
+  README gains a "30 seconds to value" block for the three-step first run.
 - First run tells its story once, permanently. The auto-discovery used to
   report via a toast that vanished on the first refresh; a fresh config now
   also shows a dismissible banner above the KPIs: "已自动识别本机服务：

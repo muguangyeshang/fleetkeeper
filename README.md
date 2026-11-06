@@ -29,6 +29,18 @@ fleetkeeper --config fleet.json sweep                       # cron entry: detect
 
 The CI badge goes live after the repository is pushed to GitHub.
 
+## 30 seconds to value
+
+```text
+1. Double-click fleetkeeper.exe        -> a console opens in your browser
+2. Wait for the first scan             -> "已自动识别本机服务：扫描到 N 个，加入了 M 个"
+3. Edit a service -> tick 挂了自动重启 -> the watchdog restarts it if it dies
+```
+
+That is the whole product. `fleetkeeper doctor` in the same folder prints a
+text diagnosis (config / autostart / webhook / per-service P0 list) if you
+prefer a terminal.
+
 ## What it looks like
 
 The panel the exe opens — services it found by itself, each with the
