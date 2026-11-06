@@ -1,0 +1,12 @@
+# CI runs on Linux/macOS/Windows; keep the checked-out tree identical on all
+# three so workflow YAML and test fixtures never differ by line endings.
+* text=auto eol=lf
+
+# Binary assets must never be normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.whl binary
+*.gz binary
