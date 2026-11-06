@@ -527,6 +527,15 @@ python -m pytest
 
 ## FAQ
 
+**Why does the page say "Failed to fetch" / cannot reach the local service?**
+The console is an HTML tab backed by the running exe. Closing the console
+window, pressing "Stop", or leaving an old tab open after a restart leaves
+that tab pointing at a port nobody listens on anymore (ports are chosen by
+the OS on each launch). The page probes `GET /api/ping` to tell "process
+exited" from "state() failed", pauses its 5-second polling after three
+consecutive failures, and shows a reconnect button. Restart the exe and open
+the new URL printed in its window; close the stale tab.
+
 **Why does a service with `L4_BUSINESS` still show `??`?**
 L4 proves a canary passed. It does not prove the service completed a unit of
 work. Without a heartbeat the doctor lists the service as insufficiently

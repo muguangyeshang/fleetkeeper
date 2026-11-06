@@ -6,6 +6,14 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- A dead-process diagnosis path in the browser console: `GET /api/ping` is a
+  config-free, probe-free liveness endpoint. On a failed `/api/state` the page
+  pings first, then separates "the exe exited" from "state() threw" and shows
+  different recovery steps. Three consecutive failures pause the 5-second
+  poll and expose a reconnect button; "Stop" clears the timer and disables
+  the buttons. Non-2xx responses now surface the server's `error` field, and
+  non-JSON responses are labelled as a possible port takeover. Documented in
+  `说明书.md`, the README FAQ and the API table.
 - `Who this is for` in the README and a matching section in `说明书.md`: name
   the intended reader (several long-lived services on one machine) and the
   readers who should use Gatus / Uptime Kuma / systemd instead. Replace the
@@ -81,6 +89,11 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   of a second inline copy.
 
 ### Bug Fixes
+- An orphaned browser tab printed the raw `TypeError: Failed to fetch` every
+  5 seconds after the exe window was closed (or after "Stop" was pressed).
+  Ports are OS-assigned on each launch, so a restarted exe never reclaims the
+  old URL. The page now explains the cause in Chinese, tells the user to
+  reopen the URL printed by the new window, and stops hammering the dead port.
 - `watchdog._run_core()` used `wcfg.get("net_probe_targets") or [DEFAULT]`,
   so an explicit `[]` was silently replaced with a public-IP reachability
   probe on every sweep. Both the template and the README promise that an

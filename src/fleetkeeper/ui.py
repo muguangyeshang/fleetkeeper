@@ -47,8 +47,12 @@ header{background:#fff;border-bottom:1px solid var(--line);padding:20px 28px;
  display:flex;align-items:center;flex-wrap:wrap;gap:12px}
 header h1{font-size:20px;margin:0;font-weight:650}
 header p{margin:0;color:var(--sub);font-size:13px}
-#conn{margin-left:auto;font-size:12px;color:var(--ok);background:#eaf7ef;
+#conn{font-size:12px;color:var(--ok);background:#eaf7ef;
  padding:4px 10px;border-radius:20px}
+#conn.off{color:var(--bad);background:#fdecea}
+#conn.stopped{color:var(--sub);background:#f1f2f4}
+.msg.err{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
 main{max-width:1080px;margin:0 auto;padding:22px 20px 60px}
 section{margin-bottom:24px}
 h2{font-size:16px;margin:0 0 12px;font-weight:650}
@@ -95,6 +99,7 @@ code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
 <header>
   <h1>服务守护面板</h1>
   <p>只在你自己的电脑上运行 · 不上传任何数据 · 关掉程序窗口即停止</p>
+  <button id="btn-reconnect" style="display:none;margin-left:auto;padding:5px 12px;font-size:12px">重新连接</button>
   <span id="conn">已连接</span>
 </header>
 <main>
@@ -152,7 +157,17 @@ code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
 <script>
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function say(t){document.getElementById('msg').textContent=t;}
+function say(t,err){
+ var m=document.getElementById('msg');
+ m.textContent=t;m.className=err?'msg err':'msg';
+}
+function explain(e){
+ var m=String(e&&e.message||e||'');
+ if(m==='SERVICE_DOWN')return '连不上本机服务了：程序窗口被关掉，或刚才点了「停止程序」。重新双击 fleetkeeper.exe，用新窗口里打印的网址打开本页。';
+ if(m==='BAD_JSON')return '这个端口回的不是本程序的 JSON，可能被别的程序占用了。';
+ if(m.indexOf('HTTP ')===0)return '服务还在，但这次没读到状态（'+m+'）。';
+ return m;
+}
 function tone(level){
  var s=String(level||'');
  if(s.indexOf('L4')===0||s.indexOf('L3')===0)return 'ok';
@@ -167,12 +182,57 @@ function stamp(ts){
    '.'+String(d.getMilliseconds()).padStart(3,'0');
 }
 function api(path,opts){
- return fetch(path,opts||{}).then(function(r){
-   if(!r.ok)throw new Error('HTTP '+r.status);
-   return r.json();
+ // Only the network layer is normalised here: a stopped exe yields TypeError
+ // "Failed to fetch". HTTP errors and bad JSON are different failures with
+ // different fixes, so they keep their own labels.
+ return fetch(path,opts||{}).catch(function(e){
+   var err=new Error('SERVICE_DOWN');err.cause=e;throw err;
+ }).then(function(r){
+   if(!r.ok){
+     return r.text().then(function(t){
+       var detail='';
+       try{detail=(JSON.parse(t)||{}).error||'';}catch(_){}
+       throw new Error('HTTP '+r.status+(detail?'：'+detail:''));
+     });
+   }
+   return r.json().catch(function(pe){
+     var err=new Error('BAD_JSON');err.cause=pe;throw err;
+   });
  });
 }
 var presetData=[],isPlaceholder=true;
+var pollTimer=null,stopped=false,inFlight=false,failures=0,MAX_FAILURES=3;
+function setConn(text,cls){
+ var c=document.getElementById('conn');c.textContent=text;c.className=cls||'';
+}
+function showReconnect(on){
+ document.getElementById('btn-reconnect').style.display=on?'':'none';
+}
+function startPoll(){
+ if(pollTimer)return;
+ pollTimer=setInterval(function(){
+   if(document.getElementById('auto').checked&&!stopped&&!inFlight)refresh();
+ },5000);
+}
+function pausePoll(){
+ if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+ showReconnect(true);
+}
+// /api/ping touches no config, no port probes and no network: it is the
+// cheapest way to tell "the exe is gone" from "state() threw an exception".
+function diagnose(){
+ return api('/api/ping').then(function(){return 'ALIVE';},
+                             function(){return 'DOWN';});
+}
+function stopUI(){
+ stopped=true;
+ if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+ showReconnect(false);
+ setConn('已停止','stopped');
+ say('已停止，可以关掉程序窗口了。以后要用，重新双击 fleetkeeper.exe，用新窗口里打印的网址打开。');
+ var ids=['btn-check','btn-sweep','btn-report','btn-stop'];
+ for(var i=0;i<ids.length;i++)document.getElementById(ids[i]).disabled=true;
+}
 function renderPresets(st){
  isPlaceholder=!!st.is_placeholder;
  document.getElementById('intro-text').textContent=isPlaceholder?
@@ -198,7 +258,7 @@ function showPresetDetail(){
 }
 function render(st){
  renderPresets(st);
- document.getElementById('conn').textContent='已连接 · '+esc(st.generated_at||'');
+ setConn('已连接 · '+esc(st.generated_at||''),'');
  document.getElementById('cfgpath').textContent=esc(st.config_path||'-');
  var svcs=st.services||[];
  document.getElementById('count').textContent='('+svcs.length+')';
@@ -229,8 +289,33 @@ function render(st){
  document.getElementById('tl-empty').style.display=rows.length?'none':'block';
 }
 function refresh(){
- return api('/api/state').then(render).catch(function(e){
-   document.getElementById('conn').textContent='连接中断';say('读取失败：'+e.message);
+ if(stopped)return Promise.resolve(false);
+ if(inFlight)return Promise.resolve(false);   // never stack slow probes
+ inFlight=true;
+ return api('/api/state').then(function(st){
+   inFlight=false;failures=0;
+   render(st);showReconnect(false);startPoll();
+   return true;
+ }).catch(function(e){
+   inFlight=false;
+   return diagnose().then(function(kind){
+     var msg;
+     if(kind==='DOWN'){
+       msg='读取失败：连不上本机服务了。程序窗口可能已被关掉，或刚才点了「停止程序」。'
+          +'重新双击 fleetkeeper.exe，用新窗口里打印的网址打开本页（每次启动端口都会变，旧网址作废）。';
+       setConn('服务已退出','off');
+     }else{
+       msg='读取失败：服务还在，但状态读取出错（'+explain(e)+'）。等几秒重试，或看程序窗口里的报错。';
+       setConn('状态异常','off');
+     }
+     failures++;
+     if(failures>=MAX_FAILURES){
+       msg+=' 自动刷新已暂停：程序恢复后可点右上角「重新连接」；如果已经重启过 exe，请直接关掉这个旧标签页。';
+       pausePoll();
+     }
+     say(msg,true);
+     return false;
+   });
  });
 }
 function post(path,body){
@@ -238,7 +323,12 @@ function post(path,body){
                   body:JSON.stringify(body||{})});
 }
 document.getElementById('btn-check').onclick=function(){
- say('正在体检…');refresh().then(function(){say('体检完成。');});
+ say('正在体检…');refresh().then(function(ok){if(ok)say('体检完成。');});
+};
+document.getElementById('btn-reconnect').onclick=function(){
+ stopped=false;failures=0;
+ say('正在重新连接…');
+ refresh().then(function(ok){if(ok){say('已重新连上。');startPoll();}});
 };
 document.getElementById('btn-sweep').onclick=function(){
  say('正在跑一次守护…');
@@ -250,19 +340,15 @@ document.getElementById('btn-sweep').onclick=function(){
    if(r.network_down)parts.push('网络断开：本次不自愈');
    say('守护完成：'+parts.join(' · '));
    return refresh();
- }).catch(function(e){say('守护失败：'+e.message);});
+ }).catch(function(e){say('守护失败：'+explain(e),true);});
 };
 document.getElementById('btn-report').onclick=function(){window.open('/report','_blank');};
 document.getElementById('btn-stop').onclick=function(){
  if(!confirm('停止后这个页面就不能用了，确定吗？'))return;
  say('正在停止…');
- post('/api/stop').then(function(){
-   say('已停止，可以关掉程序窗口了。');
-   document.getElementById('conn').textContent='已停止';
- }).catch(function(){
-   say('已停止，可以关掉程序窗口了。');
-   document.getElementById('conn').textContent='已停止';
- });
+ // shutdown() may kill the socket before the response is flushed, so both
+ // the success and the failure branch mean the same thing to this page.
+ post('/api/stop').then(stopUI,stopUI);
 };
 document.getElementById('preset-select').onchange=showPresetDetail;
 document.getElementById('preset-form').onsubmit=function(ev){
@@ -272,7 +358,7 @@ document.getElementById('preset-form').onsubmit=function(ev){
  say('正在套用场景…');
  post('/api/preset',{name:name,force:true}).then(function(r){
    say(r.message||'已套用场景');return refresh();
- }).catch(function(e){say('套用失败：'+e.message);});
+ }).catch(function(e){say('套用失败：'+explain(e),true);});
 };
 document.getElementById('add').onsubmit=function(ev){
  ev.preventDefault();
@@ -280,11 +366,9 @@ document.getElementById('add').onsubmit=function(ev){
  if(!name||!port){say('名字和端口都要填。');return;}
  post('/api/service',{name:name,port:port}).then(function(r){
    say(r.message||'已保存');f.name.value='';f.port.value='';return refresh();
- }).catch(function(e){say('保存失败：'+e.message);});
+ }).catch(function(e){say('保存失败：'+explain(e),true);});
 };
-var timer=setInterval(function(){
- if(document.getElementById('auto').checked)refresh();
-},5000);
+startPoll();
 refresh();
 </script>
 </body>
@@ -503,6 +587,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         try:
             if route == "/":
                 return self._html(PAGE)
+            if route == "/api/ping":
+                # Deliberately touches no config, no port probes and no
+                # network. The page uses it to separate "the exe exited"
+                # from "state() itself raised an exception".
+                started = getattr(self.server, "fk_started", time.time())
+                return self._json({"ok": True, "pid": os.getpid(),
+                                   "uptime": round(time.time() - started, 1)})
             if route == "/report":
                 return self._html(report_mod.render(doctor_report(self.cfg_path)))
             if route == "/api/state":
@@ -577,6 +668,7 @@ def make_server(config_path, port=0):
     server = ThreadingHTTPServer(("127.0.0.1", port), ConsoleHandler)
     server.daemon_threads = True
     server.fk_config = path
+    server.fk_started = time.time()
     return server
 
 

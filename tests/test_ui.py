@@ -3,6 +3,7 @@
 handler methods directly: routing, headers, JSON encoding and shutdown all
 have to work the way a browser actually sees them."""
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -56,6 +57,69 @@ def test_root_page_is_chinese_and_fully_offline(console):
     assert "<link " not in body
     assert "cdn" not in body.lower()
     assert "https://" not in body
+
+
+def test_ping_route_survives_a_broken_config(console):
+    """The page's 'is the exe still alive?' probe must not read fleet.json.
+
+    If ping and state both depend on the config, a single bad edit makes the
+    console claim the whole program exited, which sends the user to restart
+    an exe that is actually running fine.
+    """
+    base, cfg_path = console
+    code, _, body = _req(base, "/api/ping")
+    data = json.loads(body)
+    assert code == 200
+    assert data["ok"] is True
+    assert isinstance(data["pid"], int) and data["pid"] > 0
+    assert data["uptime"] >= 0
+
+    os.remove(cfg_path)
+    code, _, body = _req(base, "/api/ping")
+    assert code == 200 and json.loads(body)["ok"] is True
+    code, _, _ = _req(base, "/api/state")
+    assert code == 500
+
+
+def test_page_translates_network_errors_into_recovery_steps(console):
+    """Regression for '读取失败：Failed to fetch' on an orphaned tab."""
+    base, _ = console
+    _, _, body = _req(base, "/")
+    assert 'id="btn-reconnect"' in body
+    assert "/api/ping" in body
+    assert "SERVICE_DOWN" in body
+    assert "BAD_JSON" in body
+    assert "服务已退出" in body
+    assert "状态读取出错" in body
+    assert "重新双击 fleetkeeper.exe" in body
+    assert "自动刷新已暂停" in body
+    assert "clearInterval" in body          # stop must kill the 5s poll
+    assert "stopUI" in body
+    # The raw browser TypeError must never be printed to a non-technical user.
+    assert "读取失败：'+e.message" not in body
+    assert "say('读取失败：'" not in body
+
+
+def test_stopped_process_really_refuses_connections(tmp_path):
+    """The browser-side 'Failed to fetch' is this URLError over loopback."""
+    cfg = tmp_path / "fleet.json"
+    safeio.atomic_write_text(
+        str(cfg), template.render(template.default_config(port=59204)))
+    server = ui.make_server(str(cfg), 0)
+    t = threading.Thread(target=server.serve_forever,
+                         kwargs={"poll_interval": 0.05}, daemon=True)
+    t.start()
+    base = "http://127.0.0.1:{}".format(server.server_port)
+    try:
+        assert _req(base, "/api/ping")[0] == 200
+        assert _req(base, "/api/stop", {})[0] == 200
+        t.join(timeout=3)
+        assert not t.is_alive()
+        server.server_close()
+        with pytest.raises(urllib.error.URLError):
+            _req(base, "/api/ping")
+    finally:
+        server.server_close()
 
 
 def test_state_payload_matches_cli_ladder(console):
