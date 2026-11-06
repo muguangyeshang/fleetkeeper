@@ -130,7 +130,14 @@ def _run_core(config_path):
     threshold = int(wcfg.get("threshold", 2))
     re_alert_interval = int(wcfg.get("re_alert_interval", 15))
     heal_cooldown = int(wcfg.get("heal_cooldown_seconds", 180))
-    net_targets = [tuple(t) for t in (wcfg.get("net_probe_targets") or [["223.5.5.5", 443]])]
+    # An explicit empty list is the operator disabling the gate (the generated
+    # template ships with []). Only a MISSING key falls back to the built-in
+    # target; `or` here would silently turn "off" into a public-IP probe on
+    # every sweep, and a WAN outage would then suspend healing on a fresh host.
+    raw_targets = wcfg.get("net_probe_targets")
+    if raw_targets is None:
+        raw_targets = [["223.5.5.5", 443]]
+    net_targets = [tuple(t) for t in raw_targets]
     net_timeout = float(wcfg.get("net_probe_timeout", 3.0))
 
     # -- pause gates (marker files) ------------------------------------

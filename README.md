@@ -29,9 +29,44 @@ fleetkeeper --config fleet.json sweep                       # cron entry: detect
 
 The CI badge goes live after the repository is pushed to GitHub.
 
+## What it looks like
+
+A real two-service run: one live local HTTP endpoint with a business canary,
+one port with no listener. This is copied from a terminal, not drafted.
+
+```console
+$ fleetkeeper --config fleet.json doctor
+fleetkeeper doctor  2026-11-06T18:13:31+0800
+====================================================================
+[??] LLM Gateway            :59201  L4_BUSINESS
+      heartbeat: NO_HEARTBEAT  service has no heartbeat; it cannot prove it is working
+[P0] Dead Worker            :59202  L0_CONFIG
+      heartbeat: NO_HEARTBEAT  service has no heartbeat; it cannot prove it is working
+====================================================================
+P0 failures (broken for real):
+  - Dead Worker :59202
+      no process listening
+
+Insufficiently covered (not failures, but work is unproven):
+  - LLM Gateway : heartbeat=NO_HEARTBEAT
+  a live port proves the process is not dead; it does not prove work.
+```
+
+`[??]` beside `L4_BUSINESS` is the whole point. A live port and a passing
+canary do not prove the service completed a unit of work, so the doctor
+refuses to call it covered.
+
+Open [docs/assets/status-page.html](docs/assets/status-page.html) to see the
+offline status page before installing anything. One self-contained HTML file,
+generated from a real `status --json` result. No CDN, no JavaScript, no
+external references.
+
 ## Contents
 
 - [Install](#install)
+- [What it looks like](#what-it-looks-like)
+- [Documentation](#documentation)
+- [Project layout](#project-layout)
 - [Why this exists](#why-this-exists)
 - [The evidence ladder](#the-evidence-ladder)
 - [Quick start](#quick-start)
@@ -40,7 +75,10 @@ The CI badge goes live after the repository is pushed to GitHub.
 - [Platform notes](#platform-notes)
 - [CLI](#cli)
 - [What it deliberately does not do](#what-it-deliberately-does-not-do)
+- [How this compares](#how-this-compares)
 - [Tested](#tested)
+- [FAQ](#faq)
+- [Roadmap](#roadmap)
 - [Changelog](#changelog)
 - [Contributing](#contributing)
 - [Releasing](#releasing)
@@ -67,11 +105,11 @@ have Python. The exe is built locally, not committed to the repository.
 **B/C) Command line, both from a checkout:**
 
 ```bash
-# A) editable install — gives you the `fleetkeeper` console command
+# B) editable install — gives you the `fleetkeeper` console command
 python -m pip install -e .
 fleetkeeper --help
 
-# B) install nothing — copy src/fleetkeeper anywhere, or point PYTHONPATH at it
+# C) install nothing — copy src/fleetkeeper anywhere, or point PYTHONPATH at it
 PYTHONPATH=src python -m fleetkeeper.cli --config config/fleet.json doctor
 ```
 
@@ -83,6 +121,38 @@ Tagging a `v*` release builds the sdist/wheel, opens a **draft** GitHub release
 and publishes to PyPI via Trusted Publishing (`.github/workflows/publish.yml`).
 The first publish requires registering a pending publisher on PyPI — see
 [RELEASING.md](RELEASING.md).
+
+---
+
+## Documentation
+
+| Document | Language | For |
+|---|---|---|
+| [docs/说明书.md](docs/说明书.md) | 中文 | Double-click-the-exe walkthrough. Every button, every config field, what each status label means, and what to do when something looks wrong. |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | English | Complete CLI and configuration reference, canary expressions, alert receivers, scheduling, troubleshooting. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | English | Module map, sweep data flow, safety gates, state machine, performance limits, test strategy, extension points. |
+| [docs/README.md](docs/README.md) | English | Documentation index and conventions. |
+
+## Project layout
+
+```
+fleetkeeper/
+  README.md                  GitHub home page (this file)
+  CHANGELOG.md               Unreleased always at the top
+  CONTRIBUTING.md            no runtime deps, a test per behaviour
+  SECURITY.md                private advisory, supported versions
+  RELEASING.md               version bump, tag, Trusted Publishing
+  LICENSE                    MIT
+  pyproject.toml             package metadata, dev extra
+  MANIFEST.in                sdist contents
+  config/fleet.example.json  filled-out config
+  src/fleetkeeper/           13 standard-library modules
+  scripts/                   exe entry point and build_exe.bat
+  tests/                     99 pytest tests in 11 files
+  docs/                      user guide, Chinese manual, architecture, sample page
+  start.bat                  console launcher for machines with Python
+  .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
+```
 
 ---
 
@@ -372,6 +442,24 @@ fleetkeeper logs SERVICE [--tail N] [--raw]             service logs, redacted b
 - **No unbounded reads.** Probes cap the response body at 64 KiB.
 - **No duplicate canary traffic.** JSON inspection reuses the probe response.
 
+## How this compares
+
+Same category, different job. This table is about what each tool does on a
+single host, not about which one is better overall.
+
+| Tool | Detection | Does it act on a dead service? |
+|---|---|---|
+| **fleetkeeper** | port + PID + TCP + HTTP + business canary + heartbeat age | **Yes**, behind WAN / cooldown / pause / PID gates |
+| [Gatus](https://github.com/TwiN/gatus) (Go, 12.5k stars) | 12 protocols, condition DSL, 44 alert providers, Vue status page, maintenance windows, SQL storage, WAN connectivity gate | No. A source-level read of its `watchdog/` found no `exec.Command`, `os.StartProcess`, `Restart` or self-heal code path. |
+| [Uptime Kuma](https://github.com/louislam/uptime-kuma) (Node, 93k stars) | full self-hosted monitoring UI, status pages, push/heartbeat checks | No restart action |
+| [Healthchecks](https://github.com/healthchecks/healthchecks) (~10.5k stars) | deadman-switch heartbeats only | No |
+| supervisor / systemd / NSSM | process liveness | Yes, with no business canary, no WAN gate and no per-port cooldown |
+
+The dividing line is worth stating plainly: Gatus also has a WAN gate
+(`Connectivity.Checker`), so that mechanism is not unique here. What it does
+not have is a healing action. A sensible deployment lets Gatus do detection
+and notification while fleetkeeper owns the gated restart.
+
 ## Tested
 
 99 pytest tests, including a fake live fleet over real HTTP sockets, a real
@@ -394,6 +482,63 @@ Linux / macOS netstat parsing, and unknown-PID tolerance.
 ```bash
 python -m pytest
 ```
+
+## FAQ
+
+**Why does a service with `L4_BUSINESS` still show `??`?**
+L4 proves a canary passed. It does not prove the service completed a unit of
+work. Without a heartbeat the doctor lists the service as insufficiently
+covered, which is a third state, neither healthy nor broken.
+
+**Why did nothing get restarted during an outage?**
+That is intentional. When every `net_probe_targets` host is unreachable, the
+sweep records the issues and returns without launching anything. Set reachable
+targets, or set `net_probe_targets: []` to disable the gate entirely.
+
+**Can it kill a process by name?**
+No such API exists. `proc.py` exposes PID-only operations and validates the
+command line first. Ten services may share one `pythonw.exe` on Windows.
+
+**Does the exe phone home, or need the internet?**
+No. It binds to `127.0.0.1`, has no embedded URLs, and makes no outbound
+request unless you configure `notify.webhook_url`. The offline HTML page has
+zero external references.
+
+**Is it a daemon? Does it autostart?**
+No. One sweep is one short-lived process owned by your cron or Task Scheduler
+entry. The browser console lives only while its window is open. Nothing is
+written to the registry and no service or scheduled task is installed.
+
+**Where does it write data?**
+Under `runtime/` next to the config file. `state.json` is a snapshot,
+`history.sqlite3` is an append-only timeline, `alerts.log` is text, and
+`heartbeat/` holds one JSON per service. Delete the folder to reset.
+
+**Can I use it with Gatus or Uptime Kuma?**
+Yes. Let them own detection and display; point fleetkeeper at the same ports
+for the gated healing action. An inbound-webhook adapter on `notify.py` is the
+cleanest next step and is on the roadmap.
+
+**Which Python versions and systems?**
+Python 3.8+ on the CLI path, Windows-first with Linux supported. macOS and
+hardened containers degrade to port-level evidence when `netstat` exposes no
+PID, and say so explicitly. The exe is Windows only, Python 3.8-3.13 in CI.
+
+## Roadmap
+
+Cheap additions that do not require a core rewrite, all standard library:
+
+1. Concurrent per-service probes (a sequential sweep is O(n) in network
+   timeouts, the current scaling limit).
+2. Alert state machine fields: success threshold, send-on-resolved, minimum
+   reminder interval.
+3. A canary expression DSL beyond the current four `expect` keys.
+4. Read-only `/metrics` and badge routes, plus an inbound webhook adapter so
+   an external detector can trigger a gated heal.
+
+Explicitly **not** planned: 44 alert providers, a JavaScript SPA, Postgres,
+Helm/K8s deployment, 12 probe protocols, or a public status page. Those would
+turn this into a smaller version of a project that already exists.
 
 ## Changelog
 

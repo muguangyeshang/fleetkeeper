@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>fleetkeeper doctor</title>
+<style>
+:root{--bg:#f5f6f8;--surface:#fff;--text:#1b1f24;--muted:#6b7280;
+--border:#e3e7ec;--shadow:0 1px 2px rgba(16,24,40,.06),0 4px 12px rgba(16,24,40,.04);
+--bad:#d92d20;--warn:#dc6803;--info:#175cd3;--good:#067647;--slate:#98a2b3;
+--bad-bg:#fef3f2;--warn-bg:#fffaeb;--info-bg:#eff8ff;--good-bg:#ecfdf3;--slate-bg:#f2f4f7}
+@media (prefers-color-scheme:dark){
+:root{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;
+--border:#30363d;--shadow:none;--bad:#ff7b72;--warn:#e3b341;--info:#79c0ff;
+--good:#3fb950;--slate:#6e7681;--bad-bg:#2a1416;--warn-bg:#2a2110;
+--info-bg:#111d2e;--good-bg:#10251a;--slate-bg:#1c2128}}
+*{box-sizing:border-box}
+body{margin:0;padding:28px 20px 48px;background:var(--bg);color:var(--text);
+font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1120px;margin:0 auto}
+h1{font-size:21px;font-weight:650;letter-spacing:-.02em;margin:0}
+.sub{color:var(--muted);font-size:13px;margin-top:5px}
+.head{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+.stats{display:flex;gap:10px;flex-wrap:wrap}
+.stat{min-width:96px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);
+border-radius:10px;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:20px;font-weight:650;line-height:1.2}
+.stat span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.stat.bad b{color:var(--bad)}.stat.warn b{color:var(--warn)}.stat.good b{color:var(--good)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--slate);
+border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);min-width:0}
+.card.bad{border-left-color:var(--bad)}.card.warn{border-left-color:var(--warn)}
+.card.info{border-left-color:var(--info)}.card.good{border-left-color:var(--good)}
+.top{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.name{font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.port{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;
+letter-spacing:.02em;margin-top:8px}
+.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.info{background:var(--info-bg);color:var(--info)}.pill.good{background:var(--good-bg);color:var(--good)}
+.pill.slate{background:var(--slate-bg);color:var(--muted)}
+.ladder{display:flex;gap:4px;margin:14px 0 10px}
+.rung{flex:1;height:5px;border-radius:3px;background:var(--slate-bg);border:1px solid var(--border)}
+.rung.on.bad{background:var(--bad);border-color:var(--bad)}
+.rung.on.warn{background:var(--warn);border-color:var(--warn)}
+.rung.on.info{background:var(--info);border-color:var(--info)}
+.rung.on.good{background:var(--good);border-color:var(--good)}
+.runglabel{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;
+font-family:ui-monospace,SFMono-Regular,Consolas,monospace;margin-bottom:12px}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:4px 10px;font-size:12.5px;margin-top:10px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}
+ul.issues{margin:10px 0 0;padding-left:18px;font-size:12.5px}
+ul.issues li{margin:3px 0;color:var(--text)}
+ul.issues li::marker{color:var(--bad)}
+.empty{background:var(--surface);border:1px dashed var(--border);border-radius:12px;
+padding:22px;text-align:center;color:var(--muted)}
+footer{margin-top:26px;color:var(--muted);font-size:12px;border-top:1px solid var(--border);padding-top:14px}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+@media(max-width:520px){body{padding:18px 12px 36px}.grid{grid-template-columns:1fr}
+.head{align-items:flex-start}.stat{min-width:80px;flex:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div><h1>fleetkeeper doctor</h1><div class="sub">generated 2026-11-06T18:13:31+0800 · local, offline, no external resources</div></div>
+    <div class="stats">
+      <div class="stat"><b>2</b><span>services</span></div>
+      <div class="stat bad"><b>1</b><span>P0 failures</span></div>
+      <div class="stat warn"><b>2</b><span>coverage gaps</span></div>
+      <div class="stat good"><b>0</b><span>healthy</span></div>
+    </div>
+  </div>
+  <div class="grid"><section class="card good">
+  <div class="top"><div class="name">LLM Gateway</div><div class="port">:59211</div></div>
+  <div><span class="pill slate">coverage gap</span> <span class="pill good">L4_BUSINESS</span></div>
+  <div class="ladder"><div class="rung on good" title="L0_CONFIG"></div><div class="rung on good" title="L1_PROCESS"></div><div class="rung on good" title="L2_PORT"></div><div class="rung on good" title="L3_PROTOCOL"></div><div class="rung on good" title="L4_BUSINESS"></div></div>
+  <div class="runglabel"><span>L0 config</span><span>L4 business canary</span></div>
+  <dl class="kv"><dt>heartbeat</dt><dd>NO_HEARTBEAT</dd><dt>pids</dt><dd>33764</dd><dt>recovery</dt><dd>none</dd><dt>evidence</dt><dd>PID 33764 listening on :59211 · TCP connect OK · HTTP 200 OK · business canary passed: HTTP 200 (data hit 1 items, required &gt;=1)</dd></dl>
+</section><section class="card bad">
+  <div class="top"><div class="name">Dead Worker</div><div class="port">:59212</div></div>
+  <div><span class="pill bad">P0 · broken</span> <span class="pill bad">L0_CONFIG</span></div>
+  <div class="ladder"><div class="rung on bad" title="L0_CONFIG"></div><div class="rung" title="L1_PROCESS"></div><div class="rung" title="L2_PORT"></div><div class="rung" title="L3_PROTOCOL"></div><div class="rung" title="L4_BUSINESS"></div></div>
+  <div class="runglabel"><span>L0 config</span><span>L4 business canary</span></div>
+  <dl class="kv"><dt>heartbeat</dt><dd>NO_HEARTBEAT</dd><dt>pids</dt><dd>-</dd><dt>recovery</dt><dd>none</dd></dl><ul class="issues"><li>no process listening</li></ul>
+</section></div>
+  <footer>Evidence stops at L4 (business canary). L5 (user-visible outcome) is never auto-claimed.
+  A live port proves the process is not dead; it does not prove work is being done.</footer>
+</div>
+</body>
+</html>

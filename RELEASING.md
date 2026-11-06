@@ -9,6 +9,72 @@ Patch releases are cut as soon as a fix lands. Minor releases are cut when a
 new module or a new evidence level lands. There is no fixed calendar schedule —
 this project ships small and often rather than batching changes.
 
+## Repository home page (one-time, before the first push)
+
+`README.md` **is** the GitHub home page. GitHub renders it below the file
+list; everything a visitor sees before clicking a file comes from that one
+file. The sections are ordered for that: badges, one-sentence positioning,
+three commands, a real terminal transcript, documentation links, install,
+project layout, mechanisms, quick start, config, CLI, comparison, FAQ,
+roadmap, governance links, license.
+
+The repository settings are not files and have to be filled in on GitHub
+after `gh repo create`. Paste-ready values:
+
+**About / Description** (GitHub allows 350 characters):
+
+```
+Self-healing watchdog for local AI service fleets. WAN-down gate, per-port cooldowns, pause markers, PID-validated process ops, L0-L4 evidence ladder, alerts and an incident timeline. Pure Python standard library, zero dependencies, with a standalone Windows exe.
+```
+
+**Website**: the GitHub repository URL until a docs site exists. Do not point
+it at a URL that is not live.
+
+**Topics**:
+
+```
+python watchdog self-healing monitoring homelab llmops reliability
+zero-dependency standard-library service-health incident-timeline
+```
+
+**Social preview**: use a screenshot of `docs/assets/status-page.html`
+(offline, no external assets). Do not commit generated screenshots into the
+source tree unless they are needed for the preview image.
+
+**First push** (requires a valid GitHub token; `gh auth status` currently
+reports the default token as invalid):
+
+```bash
+gh auth login -h github.com
+gh repo create fleetkeeper --public --source=. --remote=origin --push
+```
+
+**Draft release notes** for the first tag. `CHANGELOG.md` already records
+0.1.0 and 0.1.1 as released, and the `Unreleased` section adds the console,
+exe, alerts and timeline, so the next tag is `v0.2.0`. Bump `version` in
+`pyproject.toml` and `__version__` in `src/fleetkeeper/__init__.py` together,
+and move the `Unreleased` entries under `## 0.2.0` with the release date
+before tagging. Paste these notes into the draft that `publish.yml` creates:
+
+```
+fleetkeeper watches local AI service fleets and heals them only when its
+safety gates allow it: WAN down means record-only, per-port cooldowns, pause
+markers, and PID-validated process operations.
+
+Highlights
+- Browser console and a standalone Windows exe: double-click, no Python, no terminal.
+- Outbound alerts over webhook / command / file, with redaction before anything leaves the host.
+- Append-only SQLite incident timeline, so "what happened at 4am" has an answer.
+- Self-contained offline HTML status page, no CDN or JavaScript.
+- 99 tests, pure standard library, zero runtime dependencies.
+
+See README.md for the quick start, docs/USER_GUIDE.md for the full config
+reference, and docs/说明书.md for the Chinese walkthrough.
+```
+
+Attach `dist/fleetkeeper.exe` to that release. The exe is a local build
+artifact and is intentionally not committed.
+
 ## One-time setup (required before the first PyPI publish)
 
 1. Push the repository to GitHub and confirm `.github/workflows/ci.yml` is green.
@@ -94,9 +160,10 @@ removed by 2027-02-18. Migrate in the same release that raises
 `requires-python` to `>=3.9`; until then the warning is expected and
 `twine check` passes.
 
-`MANIFEST.in` keeps LICENSE, all five docs, `config/*.json` and the tests in
-the sdist — setuptools' defaults would otherwise ship only the package and
-README.
+`MANIFEST.in` keeps LICENSE, the five root governance docs (CONTRIBUTING,
+SECURITY, RELEASING, CHANGELOG, README), `docs/*.md` plus the sample HTML,
+`config/*.json`, `scripts/`, `start.bat` and the tests in the sdist —
+setuptools' defaults would otherwise ship only the package and README.
 
 ## Rollback
 

@@ -6,6 +6,18 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `docs/`: a full documentation set — `说明书.md` (Chinese walkthrough for
+  the double-click path), `USER_GUIDE.md` (complete CLI and configuration
+  reference), `ARCHITECTURE.md` (module map, sweep data flow, safety gates,
+  performance limits, test strategy, extension points), `docs/README.md`
+  index, and a genuinely generated `docs/assets/status-page.html` sample with
+  zero external references.
+- `README.md`: add a real terminal transcript under "What it looks like", a
+  documentation index, project layout, a comparison with Gatus / Uptime Kuma
+  / Healthchecks / supervisor, an FAQ and a roadmap. Fix the mislabelled
+  A/B/C install options.
+- `RELEASING.md`: paste-ready GitHub About description, topics, social
+  preview guidance, first-push commands and draft release notes for `v0.2.0`.
 - `ui.py` + `fleetkeeper start`: a zero-dependency local browser console.
   Running `fleetkeeper` with **no arguments** (or double-clicking the exe)
   generates `fleet.json`, serves a Chinese page bound to `127.0.0.1` only,
@@ -54,6 +66,14 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   of a second inline copy.
 
 ### Bug Fixes
+- `watchdog._run_core()` used `wcfg.get("net_probe_targets") or [DEFAULT]`,
+  so an explicit `[]` was silently replaced with a public-IP reachability
+  probe on every sweep. Both the template and the README promise that an
+  empty list disables the gate; the earlier `net_gate([])` fix did not cover
+  this path, and its regression test only passed while the WAN happened to be
+  reachable. A missing key now falls back to the built-in target while an
+  explicit `[]` disables the gate. The regression test simulates a total
+  outage, so it fails if the fallback ever returns.
 - A full user journey from a clean wheel install found and fixed five more
   first-run problems (see Improvements above for `init` and `--config`):
   timeline rows now carry the real service name and port instead of `fleet`,

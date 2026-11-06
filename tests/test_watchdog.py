@@ -264,7 +264,16 @@ def test_sweep_records_the_affected_service_for_filtering(tmp_path, net_up, monk
 
 def test_empty_net_probe_targets_disables_the_gate(tmp_path, monkeypatch):
     """A fresh install has no probe targets. That must mean 'gate off', not
-    'WAN down forever' -- otherwise healing is suspended on every new host."""
+    'WAN down forever' -- otherwise healing is suspended on every new host.
+
+    The simulated outage is the point of this test: `wcfg.get(...) or DEFAULT`
+    used to replace an explicit [] with a public IP, so this assertion only
+    passed when the real WAN happened to be reachable. With every TCP connect
+    failing, a disabled gate must still let the sweep run normally.
+    """
+    def unreachable(*a, **k):
+        raise OSError("simulated WAN outage")
+    monkeypatch.setattr(W.socket, "create_connection", unreachable)
     assert W.net_gate([], 0.2) is True
     cfg, _ = _write_cfg(tmp_path, {"gw": _make_service(_free_port())},
                         extra_watchdog={"net_probe_targets": []})
