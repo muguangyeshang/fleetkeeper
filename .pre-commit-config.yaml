@@ -1,0 +1,12 @@
+# Optional developer-only hooks. Nothing here runs at fleetkeeper runtime;
+# the package stays pure standard library.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-json
+      - id: check-yaml

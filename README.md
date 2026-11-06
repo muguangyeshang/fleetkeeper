@@ -1,10 +1,34 @@
 # fleetkeeper
 
+[![CI](https://github.com/muguangyeshang/fleetkeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/muguangyeshang/fleetkeeper/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
+![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)
+
 **Evidence-based guardian for a fleet of local AI services.**
 Pure standard library. Zero dependencies. Windows-first, Linux supported. On
 hosts where `netstat` exposes no PID (macOS, hardened containers) the ladder
 degrades to port-level evidence and says so explicitly — it never claims
 "healthy" on a proof it did not collect.
+
+The CI badge goes live after the repository is pushed to GitHub.
+
+## Contents
+
+- [Install](#install)
+- [Why this exists](#why-this-exists)
+- [The evidence ladder](#the-evidence-ladder)
+- [Quick start](#quick-start)
+- [Config](#config)
+- [Platform notes](#platform-notes)
+- [CLI](#cli)
+- [What it deliberately does not do](#what-it-deliberately-does-not-do)
+- [Tested](#tested)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
+- [Releasing](#releasing)
+- [Security](#security)
+- [License](#license)
 
 ## Install
 
@@ -21,6 +45,11 @@ PYTHONPATH=src python -m fleetkeeper.cli --config config/fleet.json doctor
 
 The Quick start below assumes A. With B, prefix each command with
 `PYTHONPATH=src` (Windows: `set PYTHONPATH=src` first).
+
+Tagging a `v*` release builds the sdist/wheel, opens a **draft** GitHub release
+and publishes to PyPI via Trusted Publishing (`.github/workflows/publish.yml`).
+The first publish requires registering a pending publisher on PyPI — see
+[RELEASING.md](RELEASING.md).
 
 ---
 
@@ -215,12 +244,23 @@ python -m pytest
 
 ## Changelog
 
-- **0.1.1** — canary `port` fallback; bounded probe reads; single canary
-  request; `registry.defaults` merge; explicit config path (no module-level
-  mutable state); POSIX netstat PID parsing; unknown-PID tolerance; README
-  install instructions made truthful.
-- **0.1.0** — initial extraction: evidence ladder, heartbeats, watchdog,
-  safe writes, PID-only ops, redaction, CLI, 41 tests.
+See [CHANGELOG.md](CHANGELOG.md) — `Unreleased` is always at the top.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: no third-party runtime
+imports, every behaviour change gets a test, no machine-specific values in
+config examples.
+
+## Security
+
+See [SECURITY.md](SECURITY.md). Only the latest non-prerelease version is
+supported; vulnerabilities go through a private advisory, not a public issue.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md) for the version bump, tag and verification
+commands.
 
 ## License
 

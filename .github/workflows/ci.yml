@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci.yml
+      - src/**
+      - tests/**
+      - pyproject.toml
+  pull_request:
+    paths:
+      - .github/workflows/ci.yml
+      - src/**
+      - tests/**
+      - pyproject.toml
+  workflow_dispatch:
+
+# Start with no permissions, grant per job. A compromised action should not
+# be able to write to the repository.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          # macos-latest is arm64; CPython 3.8/3.9 are not published for it.
+          - os: macos-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.13"
+    steps:
+      # Pinned to a commit SHA (supply-chain hygiene), version noted for humans.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test runner
+        run: python -m pip install -e ".[dev]"
+
+      - name: Byte-compile every module
+        run: python -m compileall -q src
+
+      - name: Run the suite
+        run: python -m pytest -q

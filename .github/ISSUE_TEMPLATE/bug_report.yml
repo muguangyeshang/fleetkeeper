@@ -1,0 +1,66 @@
+name: Bug report
+description: Report incorrect evidence levels, failed healing, or a CLI error
+title: "area: short summary"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove machine-specific paths, hostnames, keys and tokens before
+        pasting anything. `fleetkeeper logs` redacts by default — use it.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `python -c "import fleetkeeper; print(fleetkeeper.__version__)"`
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other / container
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11.9"
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (sanitised)
+      description: The relevant `registry.services` and `watchdog` sections, with neutral ports/hosts.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The exact command and its output (`doctor --json`, `status --json`, or `sweep --json`).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Which evidence level or heal decision you expected, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Smallest sequence that reproduces it. A failing pytest case is ideal.
+    validations:
+      required: false
