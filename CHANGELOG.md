@@ -6,6 +6,14 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `sweep` and the status cards answer different questions: a sweep checks
+  processes and ports, the cards grade L0-L4 business evidence. A green
+  "问题 0 条" beside a red L0 card looked like a bug, so the console now
+  says so explicitly after a sweep when any card is still L0/L1/L2.
+- Component-level acceptance harnesses: `scripts/component_acceptance.py`
+  (46 checks over every HTTP route, write paths, error paths and utilities
+  on a throwaway server) and `scripts/verify_console_errors.js` (14 checks
+  executing the page's own JS in a DOM stub).
 - A dead-process diagnosis path in the browser console: `GET /api/ping` is a
   config-free, probe-free liveness endpoint. On a failed `/api/state` the page
   pings first, then separates "the exe exited" from "state() threw" and shows
@@ -89,6 +97,9 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   of a second inline copy.
 
 ### Bug Fixes
+- A POST body that parsed as JSON but was not an object (array / string /
+  number / null) reached `body.get(...)` and returned 500. It is now a clean
+  400 with "请求体必须是 JSON 对象"; `test_ui.py` locks all four shapes.
 - An orphaned browser tab printed the raw `TypeError: Failed to fetch` every
   5 seconds after the exe window was closed (or after "Stop" was pressed).
   Ports are OS-assigned on each launch, so a restarted exe never reclaims the

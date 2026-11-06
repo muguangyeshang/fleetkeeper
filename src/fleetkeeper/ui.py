@@ -200,7 +200,7 @@ function api(path,opts){
    });
  });
 }
-var presetData=[],isPlaceholder=true;
+var presetData=[],isPlaceholder=true,lastState=null;
 var pollTimer=null,stopped=false,inFlight=false,failures=0,MAX_FAILURES=3;
 function setConn(text,cls){
  var c=document.getElementById('conn');c.textContent=text;c.className=cls||'';
@@ -294,7 +294,7 @@ function refresh(){
  inFlight=true;
  return api('/api/state').then(function(st){
    inFlight=false;failures=0;
-   render(st);showReconnect(false);startPoll();
+   lastState=st;render(st);showReconnect(false);startPoll();
    return true;
  }).catch(function(e){
    inFlight=false;
@@ -338,8 +338,20 @@ document.getElementById('btn-sweep').onclick=function(){
    parts.push('已恢复 '+((r.healed||[]).length)+' 个');
    parts.push('告警 '+((r.alerts||[]).length)+' 条');
    if(r.network_down)parts.push('网络断开：本次不自愈');
-   say('守护完成：'+parts.join(' · '));
-   return refresh();
+   var msg='守护完成：'+parts.join(' · ');
+   return refresh().then(function(ok){
+     // A sweep only checks processes and ports; the cards grade business
+     // evidence. "0 issues" beside a red card looks like a bug, so spell
+     // out that the two are answering different questions.
+     if(ok&&lastState&&!(r.issues||[]).length){
+       var bad=0,list=lastState.services||[];
+       for(var i=0;i<list.length;i++){
+         if(/^L[012]/.test((list[i]||{}).level||''))bad++;
+       }
+       if(bad)msg+='。守护只查进程和端口：下面还有 '+bad+' 张未通过的卡片，是业务探针没过，不用重启程序。';
+     }
+     if(ok)say(msg);       // a failed refresh already wrote the better message
+   });
  }).catch(function(e){say('守护失败：'+explain(e),true);});
 };
 document.getElementById('btn-report').onclick=function(){window.open('/report','_blank');};
@@ -639,6 +651,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             body = json.loads(raw.decode("utf-8") or "{}")
         except (ValueError, UnicodeDecodeError):
             return self._json({"error": "请求体不是合法 JSON"}, 400)
+        # A JSON array/string parses fine but has no .get(); without this
+        # check every handler below would blow up with a 500 instead of a
+        # clean 400 for a malformed request.
+        if not isinstance(body, dict):
+            return self._json({"error": "请求体必须是 JSON 对象"}, 400)
         try:
             if route == "/api/sweep":
                 return self._json(watchdog.run(self.cfg_path))

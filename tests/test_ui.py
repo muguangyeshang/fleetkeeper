@@ -95,6 +95,9 @@ def test_page_translates_network_errors_into_recovery_steps(console):
     assert "自动刷新已暂停" in body
     assert "clearInterval" in body          # stop must kill the 5s poll
     assert "stopUI" in body
+    # "0 issues" from a port/process sweep beside a red L0 business-evidence
+    # card must be explained, not left looking like a broken program.
+    assert "守护只查进程和端口" in body
     # The raw browser TypeError must never be printed to a non-technical user.
     assert "读取失败：'+e.message" not in body
     assert "say('读取失败：'" not in body
@@ -171,6 +174,26 @@ def test_save_rejects_bad_ports_and_names(console):
         code, _, body = _req(base, "/api/service", payload)
         assert code == 400
         assert "error" in json.loads(body)
+
+
+def _req_raw(base, path, raw):
+    req = urllib.request.Request(
+        base + path, data=raw, method="POST",
+        headers={"Content-Type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req, timeout=30)
+        return r.status, r.headers.get("Content-Type", ""), r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", ""), e.read().decode("utf-8")
+
+
+def test_post_rejects_non_object_json(console):
+    """A JSON array/string has no .get(); it must be a clean 400, not a 500."""
+    base, _ = console
+    for raw in (b"[1,2]", b'"hello"', b"null", b"123"):
+        code, _, body = _req_raw(base, "/api/service", raw)
+        assert code == 400
+        assert "JSON 对象" in json.loads(body)["error"]
 
 
 def test_root_page_offers_a_first_run_scenario_picker(console):
