@@ -152,6 +152,21 @@ def run_http(base, cfg, work):
           "application/json" in body, (code, body[:120]))
 
     # ---- write routes -----------------------------------------------------
+    code, _, body = req(base, "/api/autostart", {"action": "status"})
+    check("POST /api/autostart status answers", code == 200 and
+          "supported" in jbody(body), (code, body[:120]))
+    code, _, body = req(base, "/api/notify-settings",
+                        {"webhook_url": "https://hook.example/x",
+                         "webhook_on": True})
+    check("POST /api/notify-settings saves", code == 200 and
+          "通知地址" in jbody(body).get("message", ""), (code, body[:120]))
+    code, _, body = req(base, "/api/notify-settings",
+                        {"webhook_url": "javascript:alert(1)"})
+    check("notify URL must be http(s)", code == 400, (code, body[:120]))
+    code, _, body = req(base, "/api/service/update",
+                        {"key": "example", "patch": {"restart_command": "a\r\nb"}})
+    check("multiline restart command is refused", code == 400, (code, body[:120]))
+
     code, _, body = req(base, "/api/service", {"name": "网关", "port": 59302})
     check("POST /api/service saves", code == 200 and
           jbody(body).get("ok") is True and "已保存" in jbody(body)["message"],

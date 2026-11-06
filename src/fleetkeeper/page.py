@@ -222,7 +222,9 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
     <span id="watch-state">常驻守护：未开启</span>
     <div class="sep"></div>
     <button id="btn-report">完整报告</button>
+    <button id="btn-notify-set">通知设置</button>
     <button id="btn-notify-test">测试通知</button>
+    <button id="btn-autostart">开机自启</button>
     <button id="btn-export">导出配置</button>
     <div class="grow"></div>
     <label><input type="checkbox" id="auto" checked> 每 5 秒自动刷新</label>
@@ -338,10 +340,24 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
     <div class="row"><label>业务探针路径</label><input id="edit-canary" placeholder="/v1/models"></div>
     <div class="row"><label>心跳周期(秒)</label><input id="edit-period" type="number" min="5" max="86400"></div>
     <div class="row"><label>日志文件</label><input id="edit-log" placeholder="svc.log"></div>
+    <div class="row"><label><input type="checkbox" id="edit-restart"> 挂了自动重启</label></div>
+    <div class="row" id="edit-restart-row" style="display:none">
+      <label>重启命令</label><input id="edit-restart-cmd" placeholder="按它原来启动它的命令填">
+    </div>
     <div class="foot"><button class="primary" id="btn-edit-save">保存修改</button>
       <button id="btn-edit-close">取消</button>
       <button class="mini" id="btn-edit-heartbeat" title="这台服务自己不会上报心跳时，替它补一条当前证据">写入一条心跳</button></div>
-    <p class="foot-note">只允许改这几项。恢复命令、通知地址这类要执行的内容只能在配置文件里改，页面不接收。</p>
+    <p class="foot-note">重启命令在服务连续挂掉后由常驻守护执行（自动识别的服务会按它原来的启动命令预填）。</p>
+  </div>
+
+  <div class="editor" id="notify-box" style="display:none">
+    <h3>通知设置</h3>
+    <p class="hint" style="margin:0">服务出问题时往这里推一条消息。填一个钉钉/飞书/Server酱等平台的 Webhook 地址。</p>
+    <div class="row"><label>Webhook</label><input id="nf-url" placeholder="钉钉 / 飞书 / Server酱 的 Webhook 地址"></div>
+    <div class="row"><label><input type="checkbox" id="nf-on" checked> 启用 Webhook 通道</label></div>
+    <div class="foot"><button class="primary" id="btn-nf-save">保存</button>
+      <button id="btn-nf-close">关闭</button>
+      <button class="mini" id="btn-nf-test">先发一条测试</button></div>
   </div>
 </main>
 <script>
@@ -398,11 +414,13 @@ function post(path,body){
  return api(path,{method:'POST',headers:{'Content-Type':'application/json'},
                   body:JSON.stringify(body||{})});
 }
+function get(path){return api(path);}
 var presetData=[],isPlaceholder=true,lastState=null;
 var pollTimer=null,stopped=false,inFlight=false,pendingRefresh=false;
 var failures=0,MAX_FAILURES=3;
 var discoveryDone=false,discoveryBusy=false,discoveryData=[];
 var editKey=null,editIsTcp=false,watchRunning=false,stateError=false;
+var lastRow=null;   // the card row currently open in the editor (for restart toggle)
 function el(id){return document.getElementById(id);}
 function setConn(text,cls){
  var c=el('conn');c.textContent=text;c.className=cls||'';
@@ -660,7 +678,7 @@ function serviceAction(act,key){
  for(var i=0;i<list.length;i++)if(list[i].key===key)row=list[i];
  if(act==='edit'){
    if(!row){say('这个服务已经不在列表里了，先刷新。',true);return;}
-   editKey=key;
+   editKey=key;lastRow=row;
    el('edit-title').textContent='编辑 '+row.name;
    el('edit-sub').textContent='配置键 '+key+' · 端口 '+row.port;
    el('edit-name').value=row.name||'';
@@ -671,6 +689,9 @@ function serviceAction(act,key){
    el('edit-canary').value=row.canary_path||'';
    el('edit-period').value=row.heartbeat_period||60;
    el('edit-log').value='';
+   el('edit-restart').checked=!!row.has_recovery;
+   el('edit-restart-cmd').value=row.restart_hint||'';
+   el('edit-restart-row').style.display=row.has_recovery?'flex':'none';
    el('editor').style.display='block';
    return;
  }
@@ -874,7 +895,7 @@ el('btn-log').onclick=function(){
    say(d.error||('日志已读取，脱敏命中 '+d.redacted+' 处。'));
  }).catch(function(e){say('日志读取失败：'+explain(e),true);});
 };
-el('btn-edit-close').onclick=function(){el('editor').style.display='none';editKey=null;};
+el('btn-edit-close').onclick=function(){el('editor').style.display='none';editKey=null;lastRow=null;};
 el('btn-edit-heartbeat').onclick=function(){
  if(!editKey)return;
  post('/api/heartbeat',{key:editKey,ok:true}).then(function(r){
@@ -890,14 +911,70 @@ el('btn-edit-save').onclick=function(){
  };
  if(!editIsTcp)patch.health_path=el('edit-health').value.trim();
  if(el('edit-log').value.trim())patch.log_file=el('edit-log').value.trim();
+ if(el('edit-restart').checked){
+   var cmd=el('edit-restart-cmd').value.trim();
+   if(!cmd){say('勾了自动重启就要填重启命令，或把勾去掉。',true);return;}
+   patch.restart_command=cmd;
+ }else if(lastRow&&lastRow.has_recovery){
+   patch.restart_command='';   // explicit clear, not a silent no-op field
+ }
  say('正在保存修改…');
  post('/api/service/update',{key:editKey,patch:patch}).then(function(r){
-   say(r.message||'已保存');el('editor').style.display='none';editKey=null;
+   say(r.message||'已保存');el('editor').style.display='none';editKey=null;lastRow=null;
    return refresh();
  }).catch(function(e){say('修改失败：'+explain(e),true);});
 };
+el('edit-restart').onchange=function(){
+ el('edit-restart-row').style.display=el('edit-restart').checked?'flex':'none';
+};
+
+// --- notify settings dialog ------------------------------------------------
+var nfShown=false;
+el('btn-notify-set').onclick=function(){
+ get('/api/notify-settings').then(function(s){
+   el('nf-url').value=s.webhook_url||'';
+   el('nf-on').checked=!!s.webhook_on;
+   el('notify-box').style.display='block';nfShown=true;
+ }).catch(function(e){say('读取通知设置失败：'+explain(e),true);});
+};
+el('btn-nf-close').onclick=function(){el('notify-box').style.display='none';nfShown=false;};
+el('btn-nf-save').onclick=function(){
+ say('正在保存通知设置…');
+ post('/api/notify-settings',{webhook_url:el('nf-url').value.trim(),
+                              webhook_on:el('nf-on').checked}).then(function(r){
+   say(r.message||'已保存');el('notify-box').style.display='none';nfShown=false;
+ }).catch(function(e){say('保存失败：'+explain(e),true);});
+};
+el('btn-nf-test').onclick=function(){
+ say('正在发送测试通知…');
+ post('/api/notify-test',{}).then(function(r){
+   say(r.message||(r.configured?'测试通知已发出':'还没配置通知地址'));
+ }).catch(function(e){say('发送失败：'+explain(e),true);});
+};
+
+// --- autostart toggle ------------------------------------------------------
+el('btn-autostart').onclick=function(){
+ var btn=el('btn-autostart');
+ get('/api/autostart').then(function(s){
+   if(!s.supported){say(s.message||'这个系统暂不支持开机自启',true);return;}
+   say(s.installed?(s.message+' 点「关闭开机自启」可撤掉。'):s.message);
+   btn.textContent=s.installed?'关闭开机自启':'开机自启';
+   btn.onclick=function(){
+     say('正在处理开机自启…');
+     post('/api/autostart',{action:s.installed?'remove':'install'}).then(function(r){
+       say(r.message||'已完成');refreshAutostart();
+     }).catch(function(e){say('操作失败：'+explain(e),true);});
+   };
+ }).catch(function(e){say('查询失败：'+explain(e),true);});
+};
+function refreshAutostart(){
+ get('/api/autostart').then(function(s){
+   if(s.supported)el('btn-autostart').textContent=s.installed?'关闭开机自启':'开机自启';
+ }).catch(function(){});
+}
 startPoll();
 boot();
+refreshAutostart();
 </script>
 </body>
 </html>

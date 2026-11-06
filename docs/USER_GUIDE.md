@@ -103,6 +103,10 @@ confirm dialog; `/api/discover` only appends and skips ports already present.
 `GET /api/discover` returns `configured: true` on candidates whose port is
 already in `fleet.json`; those rows are never pre-selected and
 `POST /api/discover` ignores their ids.
+`POST /api/service/update` accepts `restart_command` (one line, <= 480
+chars) which stores `recovery: {"command": ...}`; the watchdog runs it
+verbatim when the port stays dead past the threshold. `/api/autostart`
+manages the `FleetKeeperPanel` logon task (Windows only); `/api/notify-settings` edits `watchdog.notify.webhook_url`.
 
 `POST /api/watch` starts an in-process loop that calls the same
 `watchdog.run()` as the CLI and the scheduled task. `GET /api/watch` reports

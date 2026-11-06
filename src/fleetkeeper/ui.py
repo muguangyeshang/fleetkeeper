@@ -336,6 +336,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if route == "/api/watch":
                 loop = getattr(self.server, "fk_watch", None)
                 return self._json(loop.status() if loop else {"running": False})
+            if route == "/api/autostart":
+                return self._json(manage.autostart(self.cfg_path, "status"))
+            if route == "/api/notify-settings":
+                return self._json(manage.get_notify_settings(self.cfg_path))
             if route == "/api/alerts":
                 q = parse_qs(parsed.query)
                 try:
@@ -487,6 +491,15 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                                    "watch": loop.status()})
             if route == "/api/notify-test":
                 return self._json(manage.notify_test(self.cfg_path))
+            if route == "/api/notify-settings":
+                msg = manage.save_notify_settings(self.cfg_path, body)
+                return self._json({"ok": True, "message": msg})
+            if route == "/api/autostart":
+                action = str(body.get("action") or "")
+                if action not in ("install", "remove", "status"):
+                    return self._json(
+                        {"error": "action 要是 install、remove 或 status"}, 400)
+                return self._json(manage.autostart(self.cfg_path, action))
             if route == "/api/preset":
                 # Only a whitelisted preset name crosses this boundary; no raw
                 # config, path or command is accepted from the browser.

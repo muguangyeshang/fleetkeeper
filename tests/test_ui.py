@@ -461,3 +461,26 @@ def test_post_accepts_the_consoles_own_origin(console):
                       headers={"Content-Type": "application/json",
                                "Origin": base})
     assert code == 200 and "issues" in body
+
+
+def test_autostart_status_route(console):
+    base, cfg = console
+    r = json.loads(urllib.request.urlopen(base + "/api/autostart", timeout=20).read())
+    assert r["supported"] == (os.name == "nt") and "message" in r
+
+
+def test_notify_settings_roundtrip(console):
+    base, cfg = console
+    r = json.loads(urllib.request.urlopen(base + "/api/notify-settings", timeout=20).read())
+    assert r["webhook_url"] in (None, "") and r["webhook_on"] is True
+    code, body = _raw(base, "/api/notify-settings",
+                      {"webhook_url": "bad url"},
+                      headers={"Content-Type": "application/json"})
+    assert code == 400 and "http" in body
+    code, body = _raw(base, "/api/notify-settings",
+                      {"webhook_url": "https://hook.example/x",
+                       "webhook_on": True},
+                      headers={"Content-Type": "application/json"})
+    assert code == 200
+    r = json.loads(urllib.request.urlopen(base + "/api/notify-settings", timeout=20).read())
+    assert r["webhook_url"] == "https://hook.example/x"

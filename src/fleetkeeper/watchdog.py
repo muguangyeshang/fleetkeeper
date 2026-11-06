@@ -21,6 +21,7 @@ interval, one alert on recovery.
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -121,7 +122,16 @@ def _run_core(config_path):
         names[port] = svc.get("name") or key
         rec = svc.get("recovery")
         if rec:
-            recovery[port] = _resolve(rec, cfg_base)
+            # Two shapes: a script path (string, legacy) or a full command
+            # line ({"command": "..."}), which is what the console's
+            # "挂了自动重启" toggle writes. A dict with no command is config
+            # damage, not something to guess around.
+            if isinstance(rec, dict):
+                cmd_text = str(rec.get("command") or "").strip()
+                if cmd_text:
+                    recovery[port] = ("cmd", cmd_text)
+            else:
+                recovery[port] = ("script", _resolve(rec, cfg_base))
 
     state_file = _resolve(wcfg.get("state_file") or "runtime/watchdog-state.json", cfg_base)
     state = load_state(state_file)
@@ -224,24 +234,34 @@ def _run_core(config_path):
 
     healed = []
     for port in dead_ports:
-        cmd = recovery.get(port)
-        if not cmd:
+        rec = recovery.get(port)
+        if not rec:
             continue
         if (now - heal_history.get(port, 0)) <= heal_cooldown:
             continue  # this port healed too recently; wait
-        if os.name == "nt" and cmd.lower().endswith(".py"):
-            launcher = _pythonw_or_python()
-            argv = [launcher, cmd]
+        kind, target = rec
+        if kind == "cmd":
+            # Full command line from the config / console. On Windows a plain
+            # string goes straight to CreateProcess (no cmd.exe in between);
+            # POSIX needs a split because Popen(list) is the only safe form.
+            argv = target if os.name == "nt" else shlex.split(target)
+            err_path = os.path.join(cfg_base, "restart-{}.err.log".format(port))
         else:
-            argv = [cmd]
+            if os.name == "nt" and target.lower().endswith(".py"):
+                launcher = _pythonw_or_python()
+                argv = [launcher, target]
+            else:
+                argv = [target]
+            err_path = os.path.splitext(target)[0] + ".err.log"
         try:
             kwargs = {}
             if os.name == "nt":
                 kwargs["creationflags"] = CREATE_NO_WINDOW
                 kwargs["env"] = _child_env()
-            with open(os.path.splitext(cmd)[0] + ".err.log", "ab") as errf:
+            with open(err_path, "ab") as errf:
                 subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=errf, **kwargs)
-            healed.append(":{}->{}".format(port, os.path.basename(cmd)))
+            healed.append(":{}->{}".format(
+                port, os.path.basename(argv[0] if isinstance(argv, list) else target)))
             heal_history[port] = now
         except Exception:
             pass

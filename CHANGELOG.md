@@ -6,6 +6,18 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- The user story is closed end to end: 双击打开 -> 自动识别 -> 挂了自己修 ->
+  自己叫人 -> 开机不用管.
+  - One-click restart. Discovery captures the command line each service was
+    started with (never for Docker Desktop proxies) and pre-fills it; the
+    edit dialog gets a 挂了自动重启 toggle that writes `recovery: {"command":
+    ...}`, which the watchdog executes verbatim (CreateProcess on Windows, a
+    shell-free split on POSIX) when the port has been dead for two sweeps.
+  - Autostart. The toolbar button queries / creates / removes a Windows
+    scheduled task (`FleetKeeperPanel`, ONLOGON, no elevation needed) that
+    starts the panel with the current config.
+  - Notify settings. A dialog edits `watchdog.notify.webhook_url` and the
+    webhook channel with validation, next to the existing test send.
 - The scan now thinks before it labels. An unrecognised HTTP service used to
   be added with health path `/`, which real gateways often answer with 404 --
   the card turned red on its very first look. The scan already fetched the

@@ -284,3 +284,34 @@ def test_empty_net_probe_targets_disables_the_gate(tmp_path, monkeypatch):
 
 
 import time  # noqa: E402  (used by clock-skew test)
+
+
+def test_command_form_recovery_runs_the_full_command_line(
+        tmp_path, net_up, monkeypatch):
+    """The console's 挂了自动重启 toggle writes recovery as {"command": ...}.
+    On Windows the string must reach CreateProcess verbatim (no cmd.exe, no
+    shlex mangling of quoted paths); a dict without a command is config
+    damage and heals nothing."""
+    dead = _free_port()
+    cfg, tmp = _write_cfg(tmp_path, {"gw": _make_service(
+        dead, recovery={"command": r'"C:\Program Files\gw.exe" --port {}'.format(dead)})})
+    monkeypatch_listeners(W, {}, monkeypatch)
+    monkeypatch_tcp(W, False, monkeypatch)
+    spawned = _spy_popen(monkeypatch)
+
+    s1 = W.run(cfg)
+    assert s1["healed"], s1
+    argv = spawned[0][0]
+    if os.name == "nt":
+        assert argv == r'"C:\Program Files\gw.exe" --port {}'.format(dead)
+    else:
+        assert argv == [r"C:\Program Files\gw.exe", "--port", str(dead)]
+
+    broken = _free_port()
+    cfg2, _ = _write_cfg(tmp_path / "x" if False else tmp_path,
+                         {"gw": _make_service(broken, recovery={"nope": 1})})
+    monkeypatch_listeners(W, {}, monkeypatch)
+    monkeypatch_tcp(W, False, monkeypatch)
+    spawned.clear()
+    s2 = W.run(cfg2)
+    assert s2["healed"] == [] and not spawned

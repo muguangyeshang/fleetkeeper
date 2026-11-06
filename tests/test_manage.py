@@ -332,3 +332,58 @@ def test_service_details_marks_paused(tmp_path):
     assert manage.set_paused(path, "second", False).startswith("已恢复")
     assert not [r for r in manage.service_details(manage.load(path), path)
                 if r["paused"]]
+
+
+# --- one-click restart / autostart / notify settings ------------------------
+
+def _write_config(cfg_path):
+    safeio.atomic_write_text(
+        cfg_path, template.render(template.default_config(port=59502)))
+
+
+def test_update_service_sets_and_clears_restart_command(tmp_path):
+    cfg_path = str(tmp_path / "fleet.json")
+    _write_config(cfg_path)
+    key = "example"
+    msg = manage.update_service(cfg_path, key,
+                                {"restart_command": "python server.py --port 1"})
+    assert "自动重启" in msg
+    cfg = json.load(open(cfg_path, encoding="utf-8"))
+    rec = cfg["registry"]["services"][key]["recovery"]
+    assert rec == {"command": "python server.py --port 1"}
+    # clearing turns it off
+    manage.update_service(cfg_path, key, {"restart_command": ""})
+    cfg = json.load(open(cfg_path, encoding="utf-8"))
+    assert cfg["registry"]["services"][key]["recovery"] is None
+
+
+def test_update_service_rejects_a_multiline_restart_command(tmp_path):
+    cfg_path = str(tmp_path / "fleet.json")
+    _write_config(cfg_path)
+    with pytest.raises(ValueError):
+        manage.update_service(cfg_path, "example",
+                              {"restart_command": "a\nb"})
+
+
+def test_save_notify_settings_validates_the_url(tmp_path):
+    cfg_path = str(tmp_path / "fleet.json")
+    _write_config(cfg_path)
+    with pytest.raises(ValueError):
+        manage.save_notify_settings(cfg_path, {"webhook_url": "not-a-url"})
+    msg = manage.save_notify_settings(
+        cfg_path, {"webhook_url": "https://example.com/hook",
+                   "webhook_on": True})
+    assert "通知地址" in msg
+    conf = json.load(open(cfg_path, encoding="utf-8"))["watchdog"]["notify"]
+    assert conf["webhook_url"] == "https://example.com/hook"
+    assert "webhook" in conf["channels"]
+    got = manage.get_notify_settings(cfg_path)
+    assert got["configured"] and got["webhook_on"]
+
+
+def test_autostart_status_queries_without_touching_anything():
+    res = manage.autostart("whatever-does-not-exist.json", "status")
+    # On Windows a status query is read-only; on other systems it is an
+    # honest "not supported" rather than a fake success.
+    assert res["supported"] == (os.name == "nt")
+    assert "installed" in res and "message" in res

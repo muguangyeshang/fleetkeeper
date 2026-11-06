@@ -297,13 +297,29 @@ def _process_hint(port, listener_map, table=None):
             info = {"name": detail.get("name") or "",
                     "cmdline": detail.get("cmdline") or ""}
         image = os.path.basename(info.get("name") or "")
-        text = "{} {}".format(image, (info.get("cmdline") or "")[:512])
+        cmdline = str(info.get("cmdline") or "")[:512]
+        text = "{} {}".format(image, cmdline)
         for pattern, kind, label in PROCESS_HINTS:
             if pattern.search(text):
                 return {"pid": pid, "process": image or None,
-                        "kind": kind, "label": label}
-        return {"pid": pid, "process": image or None, "kind": None, "label": None}
-    return {"pid": None, "process": None, "kind": None, "label": None}
+                        "kind": kind, "label": label, "cmdline": cmdline}
+        return {"pid": pid, "process": image or None, "kind": None,
+                "label": None, "cmdline": cmdline}
+    return {"pid": None, "process": None, "kind": None, "label": None,
+            "cmdline": ""}
+
+
+def _restart_hint(hint):
+    """A one-click restart needs the command line the process was started
+    with. Docker Desktop proxies must never be restarted from here: killing
+    com.docker.backend restarts every container on the machine."""
+    proc_name = str(hint.get("process") or "").lower()
+    if "docker" in proc_name or "herd" in proc_name:
+        return None
+    cmdline = str(hint.get("cmdline") or "").strip()
+    if not cmdline:
+        return None
+    return redact.redact(cmdline)[:480]
 
 
 def _candidate(port, results, hint):
@@ -380,6 +396,7 @@ def _candidate(port, results, hint):
             "evidence": redact.redact(evidence_text)[:180],
             "health_path": health_path,
             "canary": canary,
+            "restart": _restart_hint(hint),
             "status": res.get("status"),
             "recommended": confidence == "high",
         }
@@ -395,6 +412,7 @@ def _candidate(port, results, hint):
             "evidence": redact.redact("进程 {} 在监听，但没返回已知接口特征".format(
                 hint.get("process") or hint["kind"]))[:180],
             "health_path": "/", "canary": None, "status": None,
+            "restart": _restart_hint(hint),
             "recommended": False,
         }
 
@@ -424,6 +442,7 @@ def _candidate(port, results, hint):
             "evidence": redact.redact(
                 "健康路径自动选为 {}（根路径不是 200）{}".format(fpath, proc_note))[:180],
             "health_path": fpath, "canary": None,
+            "restart": _restart_hint(hint),
             "status": fres.get("status"),
             "recommended": False,
         }
@@ -453,6 +472,7 @@ def _tcp_candidate(port, hint, timeout):
         "evidence": redact.redact("进程 {} 是 {}（非 HTTP 服务），TCP 握手成功".format(
             hint.get("process") or "?", label))[:180],
         "health_path": None, "canary": None, "status": None,
+        "restart": _restart_hint(hint),
         "recommended": False,
     }
 
@@ -689,12 +709,19 @@ def apply_config(path, candidates, ids=None, auto=False):
             health = {"type": "tcp", "timeout": 3}
         else:
             health = {"path": hp, "method": "GET", "timeout": 3}
+        # A restart hint captured during the scan pre-fills "挂了自动重启":
+        # the command line the process was started with is the safest way to
+        # bring it back. The user can still clear it in the edit dialog.
+        rec = None
+        hint_cmd = str(c.get("restart") or "").strip()
+        if hint_cmd:
+            rec = {"command": hint_cmd}
         svcs[key] = {
             "name": str(c.get("name") or c.get("kind"))[:64],
             "port": port,
             "health": health,
             "canary": copy.deepcopy(canary),
-            "recovery": None,
+            "recovery": rec,
         }
         added.append("{} :{}".format(svcs[key]["name"], port))
 

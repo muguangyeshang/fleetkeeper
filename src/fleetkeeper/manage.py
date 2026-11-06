@@ -12,6 +12,8 @@ state: two consoles in one process (tests do this) must never share a registry.
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -131,6 +133,8 @@ def _one_row(key, svc, cfg, path, hb_dir):
         "canary_type": canary.get("type"),
         "heartbeat_period": period,
         "has_recovery": bool(svc.get("recovery")),
+        "restart_hint": str((svc.get("recovery") or {}).get("command") or "")
+        if isinstance(svc.get("recovery"), dict) else "",
         "logs": sorted(logs.keys()),
         "paused": False,
     }
@@ -192,6 +196,7 @@ def evaluate_rows(cfg, path, max_workers=MAX_WORKERS):
                     "health_path": "/", "canary_path": None,
                     "canary_type": None, "heartbeat_period": 60,
                     "has_recovery": False, "logs": [], "paused": False,
+                    "restart_hint": "",
                 }
     order = {k: i for i, k in enumerate(keys)}
     rows = sorted(collected.values(), key=lambda r: order[r["key"]])
@@ -336,9 +341,11 @@ def set_paused(path, key, paused):
 def update_service(path, key, patch):
     """Whitelisted field edits only.
 
-    The browser cannot set `recovery` (an arbitrary command), `alert_command`,
-    a webhook URL or an absolute log path. Probe paths are local URL paths;
-    log paths are relative filenames under the config directory.
+    `restart_command` is the one execution field the console may set: the
+    panel is loopback-only behind the Host/Origin admission gates, so whoever
+    can reach it can already edit fleet.json directly -- same trust level.
+    Probe paths are local URL paths; log paths are relative filenames under
+    the config directory.
     """
     if not isinstance(patch, dict):
         raise ValueError("修改内容必须是对象")
@@ -404,6 +411,19 @@ def update_service(path, key, patch):
             logs["stderr"] = value
         item["logs"] = logs
         changed.append("日志文件")
+    if "restart_command" in patch:
+        value = str(patch["restart_command"] or "").strip()
+        if not value:
+            if item.get("recovery"):
+                item["recovery"] = None
+                changed.append("自动重启（已关闭）")
+        else:
+            if "\n" in value or "\r" in value or len(value) > 480:
+                raise ValueError("重启命令要是一行且不超过 480 个字符")
+            # Command-form recovery is what the watchdog knows how to run
+            # without a script file; a bare path is ambiguous there.
+            item["recovery"] = {"command": value}
+            changed.append("自动重启")
     if not changed:
         raise ValueError("没有可修改的字段")
     write(path, cfg)
@@ -566,3 +586,112 @@ class WatchLoop(object):
                 "last_error": self._last_error,
                 "last_summary": self._last_summary,
             }
+
+
+# ---------------------------------------------------------------------------
+# Autostart (Windows scheduled task) and notify settings
+# ---------------------------------------------------------------------------
+
+AUTOSTART_TASK = "FleetKeeperPanel"
+
+
+def _autostart_command(config_path):
+    """The exact command line the task should run. Frozen exe -> itself;
+    source checkout -> the interpreter plus -m."""
+    exe = os.path.abspath(config_path)
+    if getattr(sys, "frozen", False):
+        program = '"{}"'.format(sys.executable)
+    else:
+        program = '"{}" -m fleetkeeper.cli'.format(sys.executable)
+    return '{} start --config "{}" --no-browser'.format(program, exe)
+
+
+def _schtasks(args, timeout=20):
+    return subprocess.run(
+        ["schtasks"] + args, capture_output=True, text=True, timeout=timeout,
+        encoding="utf-8", errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+
+
+def autostart(path, action=None):
+    """Query/install/remove the logon task that keeps the panel alive.
+
+    Returns a dict the console can show verbatim. Anything but "install"
+    works without elevation for the current user (/SC ONLOGON tasks created
+    under the user account are user-editable).
+    """
+    if os.name != "nt":
+        return {"supported": False, "installed": False,
+                "message": "开机自启目前只支持 Windows（计划任务）。"}
+    if action == "status":
+        done = _schtasks(["/Query", "/TN", AUTOSTART_TASK])
+        installed = done.returncode == 0
+        msg = "开机自启已开启，登录 Windows 后面板自己启动。" if installed \
+            else "开机自启未开启。"
+        return {"supported": True, "installed": installed, "message": msg}
+    if action == "install":
+        tr = _autostart_command(path)
+        done = _schtasks(["/Create", "/TN", AUTOSTART_TASK,
+                          "/SC", "ONLOGON", "/RL", "LIMITED",
+                          "/TR", tr, "/F"])
+        if done.returncode != 0:
+            return {"supported": True, "installed": False,
+                    "message": "注册计划任务失败：{}".format(
+                        (done.stderr or done.stdout or "").strip()[:160])}
+        return {"supported": True, "installed": True,
+                "message": "开机自启已开启（计划任务 {}）。".format(AUTOSTART_TASK)}
+    if action == "remove":
+        done = _schtasks(["/Delete", "/TN", AUTOSTART_TASK, "/F"])
+        if done.returncode != 0:
+            return {"supported": True, "installed": True,
+                    "message": "删除计划任务失败：{}".format(
+                        (done.stderr or done.stdout or "").strip()[:160])}
+        return {"supported": True, "installed": False,
+                "message": "开机自启已关闭。"}
+    raise ValueError("action 要是 status、install 或 remove")
+
+
+def get_notify_settings(path):
+    cfg = load(path)
+    conf = ((cfg.get("watchdog") or {}).get("notify")) or {}
+    url = str(conf.get("webhook_url") or "")
+    channels = conf.get("channels") or ["webhook", "command"]
+    return {
+        "webhook_url": url,
+        "webhook_on": "webhook" in channels,
+        "configured": bool(url),
+    }
+
+
+def save_notify_settings(path, patch):
+    """Whitelist-edit the notify block. The URL leaves the machine when an
+    alert fires, so it is validated as an http(s) URL and stored as given;
+    exports still redact it."""
+    if not isinstance(patch, dict):
+        raise ValueError("修改内容必须是对象")
+    cfg = load(path)
+    wcfg = cfg.setdefault("watchdog", {})
+    conf = wcfg.setdefault("notify", {})
+    changed = []
+    if "webhook_url" in patch:
+        url = str(patch["webhook_url"] or "").strip()
+        if url and not re.match(r"^https?://\S+$", url):
+            raise ValueError("Webhook 地址要以 http:// 或 https:// 开头")
+        if len(url) > 500:
+            raise ValueError("Webhook 地址太长（最多 500 个字符）")
+        conf["webhook_url"] = url or None
+        conf["webhook_timeout"] = float(conf.get("webhook_timeout") or 3.0)
+        changed.append("通知地址")
+    if "webhook_on" in patch:
+        channels = list(conf.get("channels") or ["webhook", "command"])
+        on = bool(patch["webhook_on"])
+        if on and "webhook" not in channels:
+            channels.append("webhook")
+        if not on and "webhook" in channels:
+            channels.remove("webhook")
+        conf["channels"] = channels
+        changed.append("Webhook 通道" + ("已启用" if on else "已停用"))
+    if not changed:
+        raise ValueError("没有可修改的字段")
+    write(path, cfg)
+    return "已更新通知设置：{}".format("、".join(changed))
