@@ -2,7 +2,8 @@
 """fleetkeeper CLI.
 
     fleetkeeper                                         open the browser console
-    fleetkeeper init [--config FILE] [--port N]          write a runnable config
+    fleetkeeper init [--config FILE] [--preset NAME]      write a runnable config
+    fleetkeeper init --list-presets                       show starting scenarios
     fleetkeeper start [--port N] [--no-browser]          browser console (no typing)
     fleetkeeper status [SERVICE] [--json | --html FILE]  evidence ladder
     fleetkeeper doctor [--json | --html FILE]            fleet-wide diagnosis
@@ -273,14 +274,27 @@ def cmd_start(args):
 
 def cmd_init(args):
     """Create a runnable config without needing a repository checkout."""
+    if getattr(args, "list_presets", False):
+        for item in template.preset_list():
+            print("{:<10} {}".format(item["name"], item["label"]))
+            for s in item["services"]:
+                print("           {:<16} :{}".format(s["name"], s["port"]))
+        return 0
+
     path = os.path.abspath(args.config)
     if os.path.exists(path) and not args.force:
         print("{} already exists; nothing changed. Use --force to overwrite.".format(path))
         return 1
-    cfg = template.default_config(port=args.port)
+    try:
+        cfg = template.preset_config(args.preset, port=args.port)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
     safeio.atomic_write_text(path, template.render(cfg))
-    print("wrote {}".format(path))
-    print("edit registry.services (currently one placeholder on :{}), then:".format(args.port))
+    names = ", ".join(s["name"] for s in cfg["registry"]["services"].values())
+    print("wrote {} (preset: {})".format(path, args.preset))
+    print("services: {}".format(names))
+    print("edit registry.services to match your ports, then:")
     print("  fleetkeeper --config {} doctor --html status.html".format(args.config))
     print("  fleetkeeper --config {} sweep".format(args.config))
     print("net_probe_targets is empty = network gate off; add hosts to enable it.")
@@ -355,7 +369,12 @@ def build_parser():
     ini = sub.add_parser("init", parents=[child],
                          help="write a runnable config template")
     ini.add_argument("--port", type=int, default=template.DEFAULT_PORT,
-                     help="placeholder service port (default: 8080)")
+                     help="service port for the empty/single presets (default: 8080)")
+    ini.add_argument("--preset", default="empty",
+                     choices=sorted(template.PRESET_LABELS),
+                     help="starting scenario (default: empty)")
+    ini.add_argument("--list-presets", action="store_true",
+                     help="show what each scenario contains and exit")
     ini.add_argument("--force", action="store_true",
                      help="overwrite an existing config file")
     ini.set_defaults(func=cmd_init)

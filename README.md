@@ -29,6 +29,36 @@ fleetkeeper --config fleet.json sweep                       # cron entry: detect
 
 The CI badge goes live after the repository is pushed to GitHub.
 
+## Who this is for
+
+**Install it if** you run several long-lived services on one machine (an AI
+gateway, a model server, a queue worker, a scraper) and you are the person who
+finds out the next morning that one of them quietly stopped working. Windows is
+the primary target; Linux works. You want a restart action with brakes, not
+another dashboard.
+
+- You can point at two or more local ports that should stay up.
+- You want the restart to be gated: no healing during a WAN outage, per-port
+  cooldowns, a pause marker for intentional downtime, PID-validated process
+  ops, and no auto-claim that a service works just because its port answers.
+- You prefer a single exe or pure-standard-library Python over a database, a
+  container stack and a Node runtime.
+
+**Not for you if**
+
+- You monitor many hosts, need a public status page, historical graphs or
+  dozens of notification channels. Use [Gatus](https://github.com/TwiN/gatus)
+  or [Uptime Kuma](https://github.com/louislam/uptime-kuma).
+- `systemd`, `supervisor` or NSSM already restarts your one process and you
+  only care about process liveness.
+- Your machine has no long-running local services. The first screen would have
+  nothing to watch.
+
+This is a narrow tool for a narrow group. It does not try to replace a
+monitoring platform; a sensible deployment lets Gatus detect and notify while
+fleetkeeper owns the gated restart. If you already run a Gatus instance and
+want the "act on it" half, you are exactly the intended reader.
+
 ## What it looks like
 
 A real two-service run: one live local HTTP endpoint with a business canary,
@@ -63,6 +93,7 @@ external references.
 
 ## Contents
 
+- [Who this is for](#who-this-is-for)
 - [Install](#install)
 - [What it looks like](#what-it-looks-like)
 - [Documentation](#documentation)
@@ -146,9 +177,10 @@ fleetkeeper/
   pyproject.toml             package metadata, dev extra
   MANIFEST.in                sdist contents
   config/fleet.example.json  filled-out config
+  config/ollama-stack.example.json  the built-in local-ai preset, checked in
   src/fleetkeeper/           13 standard-library modules
   scripts/                   exe entry point and build_exe.bat
-  tests/                     99 pytest tests in 11 files
+  tests/                     115 pytest tests in 12 files
   docs/                      user guide, Chinese manual, architecture, sample page
   start.bat                  console launcher for machines with Python
   .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
@@ -218,30 +250,39 @@ fleetkeeper refuses to pretend otherwise.
 
 ```bash
 # 0. easiest: double-click the exe, or just type `fleetkeeper` (no arguments).
-#    It creates fleet.json and opens the browser console by itself.
+#    It creates fleet.json, opens the browser console, and offers a scenario
+#    picker on the first screen.
 
-# 1. command-line equivalent (no checkout needed -- `init` works from a wheel)
-fleetkeeper init --config fleet.json --port 8080
+# 1. see the built-in starting scenarios
+fleetkeeper init --list-presets
 
-# 2. see the whole fleet with evidence levels (text, JSON, or an offline HTML page)
+# 2. command-line equivalent (no checkout needed -- `init` works from a wheel)
+fleetkeeper init --config fleet.json --preset local-ai
+
+# 3. see the whole fleet with evidence levels (text, JSON, or an offline HTML page)
 fleetkeeper --config fleet.json doctor
 fleetkeeper --config fleet.json doctor --html status.html
 
-# 3. run one watchdog sweep (this is your cron entry)
+# 4. run one watchdog sweep (this is your cron entry)
 fleetkeeper --config fleet.json sweep
 
-# 4. look back at what happened
+# 5. look back at what happened
 fleetkeeper --config fleet.json history --last 24h
 
 # or run sweeps in a loop
 fleetkeeper --config fleet.json watch --interval 60
 ```
 
-`init` writes one placeholder service on `--port`; edit
-`registry.services` to point it at your real ports. `net_probe_targets` is
-empty in the template, which means the network gate is **off** — add probe
-hosts to enable it. Re-running `init` refuses to overwrite unless `--force`
-is given.
+`init --list-presets` prints three scenarios. `local-ai` writes Ollama on its
+published default port plus a gateway and a queue worker, with a real
+`/api/tags` business canary. `single` writes one HTTP service, and `empty`
+(the default) writes one placeholder on `--port`. The same `local-ai` file is
+checked in at `config/ollama-stack.example.json` for reading. Edit
+`registry.services` to match your real ports. `net_probe_targets` is empty in
+every template, which means the network gate is **off** — add probe hosts to
+enable it. Re-running `init` refuses to overwrite unless `--force` is given.
+In the browser console, applying a scenario when you already saved services
+asks for confirmation, and the API refuses to overwrite without `force`.
 
 `--config` works either before or after the subcommand:
 `fleetkeeper --config fleet.json doctor` and
@@ -419,7 +460,8 @@ collapse the ladder to L0. If `netstat` is absent entirely, install `psutil`
 ```
 fleetkeeper                                            open the browser console
 fleetkeeper start [--port N] [--no-browser]             same console, explicit
-fleetkeeper init [--config FILE] [--port N] [--force]   write a runnable config
+fleetkeeper init [--config FILE] [--preset NAME] [--force]  write a runnable config
+fleetkeeper init --list-presets                            show starting scenarios
 fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
 fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis (P0 vs uncovered)
 fleetkeeper heartbeat SERVICE [--fail] [--proof ...]    write one heartbeat manually
@@ -462,7 +504,7 @@ and notification while fleetkeeper owns the gated restart.
 
 ## Tested
 
-99 pytest tests, including a fake live fleet over real HTTP sockets, a real
+115 pytest tests, including a fake live fleet over real HTTP sockets, a real
 loopback browser console exercised over HTTP (routing, first-run config,
 service editing, sweep, timeline, report, graceful stop), a frozen-exe
 double-click smoke run, a real local webhook receiver and a real subprocess

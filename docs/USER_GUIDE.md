@@ -65,12 +65,35 @@ of this:
 2. Binds an HTTP console to `127.0.0.1` on an ephemeral port.
 3. Opens the default browser. A console window stays open; closing it stops
    the program.
-4. Shows one placeholder service. Saving a real name and port replaces it.
+4. Shows one placeholder service. A red card here is expected: nothing is
+   listening on the placeholder port. The first-run panel says so explicitly
+   and offers a scenario picker. Saving a real name and port also replaces it.
 
 Pass `--no-browser` to `start` when running headless. The console exposes
 `GET /`, `GET /api/state`, `GET /api/history`, `GET /api/config`,
-`GET /report`, `POST /api/sweep`, `POST /api/service`, `POST /api/stop`.
-`POST /api/service` is the only route that rewrites config.
+`GET /api/presets`, `GET /report`, `POST /api/sweep`, `POST /api/service`,
+`POST /api/preset`, `POST /api/stop`. Two routes rewrite config:
+`/api/service` edits one entry, `/api/preset` replaces the list. Neither
+accepts a raw config, a path or a command. `/api/preset` refuses to overwrite
+saved services unless `force` is true, which the browser sends only after a
+confirm dialog.
+
+### 3.1 Starting scenarios
+
+`fleetkeeper init --list-presets` prints what each template contains. The
+browser console shows the same list in a drop-down.
+
+| Name | Services | Notes |
+|---|---|---|
+| `empty` (default) | `Example Service` on `--port` (default 8080) | One placeholder. Save a real service over it. |
+| `single` | `My Service` on `--port` | Same shape with a less confusing name. |
+| `local-ai` | Ollama `:11434`, AI Gateway `:8080`, Queue Worker `:8081` | Ollama gets a real `/api/tags` canary checking `models` has at least one item. Its `health.path` is `/` on purpose: a canary pointing at the same endpoint as the health probe is rejected as protocol-only and never reaches L4. |
+
+`11434` is Ollama's published default port, not a discovery from this host.
+`config/ollama-stack.example.json` is the exact `local-ai` config checked in
+for reading. A canary with no `port` key inherits its service's port
+(`evidence.check_canary`). Every generated config has `net_probe_targets: []`,
+which disables the WAN gate; add hosts to enable it.
 
 ## 4. CLI reference
 
@@ -80,7 +103,8 @@ Pass `--no-browser` to `start` when running headless. The console exposes
 ```
 fleetkeeper                                            open the browser console
 fleetkeeper start [--port N] [--no-browser]             same console, explicit
-fleetkeeper init [--config FILE] [--port N] [--force]   write a runnable config
+fleetkeeper init [--config FILE] [--preset NAME] [--force]  write a runnable config
+fleetkeeper init --list-presets                            show starting scenarios
 fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
 fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis
 fleetkeeper heartbeat SERVICE [--processed N] [--fail] [--proof ...]  write a heartbeat

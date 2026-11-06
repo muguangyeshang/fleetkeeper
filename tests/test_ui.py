@@ -109,6 +109,67 @@ def test_save_rejects_bad_ports_and_names(console):
         assert "error" in json.loads(body)
 
 
+def test_root_page_offers_a_first_run_scenario_picker(console):
+    base, _ = console
+    code, _, body = _req(base, "/")
+    assert code == 200
+    assert "第一次用，先选一个场景" in body
+    assert 'id="preset-select"' in body
+    assert "套用场景" in body
+    # A red card on first run is explained, not left looking like a crash.
+    assert "示例占位服务" in body
+    assert "<script src" not in body
+
+
+def test_state_reports_placeholder_and_presets(console):
+    base, _ = console
+    _, _, body = _req(base, "/api/state")
+    data = json.loads(body)
+    assert data["is_placeholder"] is True
+    assert [p["name"] for p in data["presets"]] == ["empty", "single", "local-ai"]
+    _, _, body = _req(base, "/api/presets")
+    assert json.loads(body)["presets"] == data["presets"]
+
+
+def test_preset_route_replaces_the_placeholder(console):
+    base, cfg_path = console
+    code, _, body = _req(base, "/api/preset", {"name": "local-ai", "force": True})
+    assert code == 200
+    assert "3 个服务" in json.loads(body)["message"]
+
+    _, _, body = _req(base, "/api/state")
+    data = json.loads(body)
+    assert data["service_count"] == 3
+    assert data["is_placeholder"] is False
+    assert [s["name"] for s in data["services"]] == [
+        "Ollama", "AI Gateway", "Queue Worker"]
+
+    on_disk = json.loads(open(cfg_path, encoding="utf-8").read())
+    assert set(on_disk["registry"]["services"]) == {"ollama", "gateway", "worker"}
+    assert on_disk["registry"]["services"]["ollama"]["canary"]["path"] == "/api/tags"
+
+
+def test_preset_route_refuses_to_clobber_saved_services(console):
+    base, _ = console
+    _req(base, "/api/service", {"name": "我的网关", "port": 59202})
+    code, _, body = _req(base, "/api/preset", {"name": "local-ai"})
+    assert code == 400
+    assert "覆盖" in json.loads(body)["error"]
+    _, _, body = _req(base, "/api/state")
+    assert json.loads(body)["services"][0]["name"] == "我的网关"
+    # An explicit force (the browser's confirm()) is the only way through.
+    code, _, _ = _req(base, "/api/preset", {"name": "local-ai", "force": True})
+    assert code == 200
+
+
+def test_preset_route_rejects_unknown_and_unhashable_names(console):
+    base, _ = console
+    for bad in ("../../etc/passwd", {"a": 1}, [1, 2]):
+        code, _, body = _req(base, "/api/preset", {"name": bad, "force": True})
+        assert code == 400
+        assert "没有这个场景" in json.loads(body)["error"]
+
+
 def test_history_config_and_report_routes(console):
     base, _ = console
     code, _, body = _req(base, "/api/history?last=24h")

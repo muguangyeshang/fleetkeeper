@@ -1,0 +1,73 @@
+{
+  "registry": {
+    "defaults": {
+      "heartbeat_period": 60
+    },
+    "services": {
+      "ollama": {
+        "name": "Ollama",
+        "port": 11434,
+        "health": {
+          "path": "/",
+          "method": "GET",
+          "timeout": 3
+        },
+        "canary": {
+          "type": "http",
+          "path": "/api/tags",
+          "expect": {
+            "status": 200,
+            "json_path": "models",
+            "min_items": 1
+          }
+        },
+        "recovery": null
+      },
+      "gateway": {
+        "name": "AI Gateway",
+        "port": 8080,
+        "health": {
+          "path": "/",
+          "method": "GET",
+          "timeout": 3
+        },
+        "canary": null,
+        "recovery": null
+      },
+      "worker": {
+        "name": "Queue Worker",
+        "port": 8081,
+        "health": {
+          "path": "/health",
+          "method": "GET",
+          "timeout": 3
+        },
+        "canary": null,
+        "recovery": null
+      }
+    }
+  },
+  "watchdog": {
+    "state_file": "runtime/watchdog-state.json",
+    "threshold": 2,
+    "re_alert_interval": 15,
+    "heal_cooldown_seconds": 180,
+    "net_probe_targets": [],
+    "net_probe_timeout": 3.0,
+    "pause_gates": {},
+    "alert_log": "runtime/alerts.log",
+    "alert_command": null,
+    "history_file": "runtime/history.sqlite3",
+    "history_retention_days": 30,
+    "notify": {
+      "channels": [
+        "webhook",
+        "command"
+      ],
+      "webhook_url": null,
+      "webhook_timeout": 3.0,
+      "command": null,
+      "command_timeout": 10.0
+    }
+  }
+}

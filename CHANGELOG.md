@@ -6,6 +6,21 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- `Who this is for` in the README and a matching section in `说明书.md`: name
+  the intended reader (several long-lived services on one machine) and the
+  readers who should use Gatus / Uptime Kuma / systemd instead. Replace the
+  "绝大多数人" claim in the Chinese manual with a concrete audience.
+- Built-in starting scenarios in `template.py` (`empty`, `single`, `local-ai`),
+  `fleetkeeper init --preset NAME` and `init --list-presets`. `local-ai` ships
+  Ollama on its published default port with a real `/api/tags` business
+  canary; `config/ollama-stack.example.json` is the same config checked in.
+  The Ollama health path is `/` rather than `/api/tags`: pointing both at the
+  same endpoint makes `canary_is_protocol_only` withhold L4. An exe smoke run
+  caught this on the first pass; `test_template.py` now locks it.
+- Browser console: a first-run scenario picker that explains why the
+  placeholder card is red, `GET /api/presets` and `POST /api/preset`. Applying
+  a scenario over saved services requires a confirm dialog and an explicit
+  `force`; the API rejects unknown, unhashable and non-whitelisted names.
 - `docs/`: a full documentation set — `说明书.md` (Chinese walkthrough for
   the double-click path), `USER_GUIDE.md` (complete CLI and configuration
   reference), `ARCHITECTURE.md` (module map, sweep data flow, safety gates,
@@ -51,7 +66,7 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 - `template.py`: built-in config template so the console command is
   self-sufficient; covered by a test that keeps its keys in sync with the
   shipped `config/fleet.example.json`.
-- 48 new tests (99 total), stable across three consecutive runs: real loopback
+- 64 new tests (115 total), stable across three consecutive runs: real loopback
   HTTP console tests, a real local webhook receiver, a real subprocess command
   hook, XSS escaping, timeline retention, P0 badges after JSON round-trip,
   CLI html/history/init/start paths, and a frozen-exe double-click smoke run.

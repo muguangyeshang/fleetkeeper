@@ -162,6 +162,36 @@ def test_init_never_clobbers_without_force(tmp_path, capsys):
     assert cli.main(["init", "--config", str(target), "--force"]) == 0
 
 
+def test_init_with_local_ai_preset(tmp_path, capsys):
+    target = tmp_path / "fleet.json"
+    rc = cli.main(["init", "--config", str(target), "--preset", "local-ai"])
+    assert rc == 0
+    assert "preset: local-ai" in capsys.readouterr().out
+    cfg = json.loads(target.read_text(encoding="utf-8"))
+    services = cfg["registry"]["services"]
+    assert set(services) == {"ollama", "gateway", "worker"}
+    assert services["ollama"]["canary"]["path"] == "/api/tags"
+    # The generated file must be usable by the other commands immediately.
+    assert cli.main(["status", "--config", str(target), "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == 3
+
+
+def test_list_presets_needs_no_config(capsys):
+    assert cli.main(["init", "--list-presets"]) == 0
+    out = capsys.readouterr().out
+    for name in ("empty", "single", "local-ai"):
+        assert name in out
+    assert "Ollama" in out
+    assert "11434" in out
+
+
+def test_unknown_preset_is_a_usage_error():
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["init", "--preset", "no-such-preset"])
+    assert exc.value.code == 2
+
+
 def test_config_works_before_and_after_subcommand(tmp_path):
     target = tmp_path / "fleet.json"
     assert cli.main(["--config", str(target), "init"]) == 0

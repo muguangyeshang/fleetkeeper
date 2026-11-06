@@ -77,6 +77,8 @@ form{display:flex;flex-wrap:wrap;gap:10px}
 input{font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);
  border-radius:8px;background:#fff;color:var(--ink)}
 input[name=name]{flex:2;min-width:180px}input[name=port]{flex:1;min-width:130px}
+select{font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);
+ border-radius:8px;background:#fff;color:var(--ink);max-width:100%}
 .hint{color:var(--sub);font-size:12px;margin:10px 0 0;word-break:break-all}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
@@ -96,6 +98,16 @@ code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
   <span id="conn">已连接</span>
 </header>
 <main>
+  <section class="panel" id="intro">
+    <h2>第一次用，先选一个场景</h2>
+    <p class="hint" id="intro-text"></p>
+    <form id="preset-form">
+      <select id="preset-select" name="preset"></select>
+      <button class="primary" type="submit">套用场景</button>
+    </form>
+    <p class="hint" id="preset-detail"></p>
+  </section>
+
   <section class="bar">
     <button class="primary" id="btn-check">立即体检</button>
     <button id="btn-sweep">跑一次守护</button>
@@ -160,7 +172,32 @@ function api(path,opts){
    return r.json();
  });
 }
+var presetData=[],isPlaceholder=true;
+function renderPresets(st){
+ isPlaceholder=!!st.is_placeholder;
+ document.getElementById('intro-text').textContent=isPlaceholder?
+  '现在列表里的是示例占位服务，显示红色是正常现象，不是程序坏了。选一个接近你电脑情况的场景，或者直接在下面填你自己的服务名和端口。':
+  '想换一套起始服务，可以在这里套用。套用会覆盖当前的服务列表。';
+ presetData=st.presets||[];
+ var sel=document.getElementById('preset-select'),h='';
+ for(var i=0;i<presetData.length;i++){
+  h+='<option value="'+esc(presetData[i].name)+'">'+esc(presetData[i].label)+'</option>';
+ }
+ sel.innerHTML=h;
+ showPresetDetail();
+}
+function showPresetDetail(){
+ var sel=document.getElementById('preset-select'),d=null;
+ for(var i=0;i<presetData.length;i++){if(presetData[i].name===sel.value)d=presetData[i];}
+ if(!d)return;
+ var parts=[];
+ for(var j=0;j<d.services.length;j++){
+  parts.push(d.services[j].name+' :'+d.services[j].port);
+ }
+ document.getElementById('preset-detail').textContent='会写入 '+parts.join('、')+'。端口按你自己的实际情况改。';
+}
 function render(st){
+ renderPresets(st);
  document.getElementById('conn').textContent='已连接 · '+esc(st.generated_at||'');
  document.getElementById('cfgpath').textContent=esc(st.config_path||'-');
  var svcs=st.services||[];
@@ -226,6 +263,16 @@ document.getElementById('btn-stop').onclick=function(){
    say('已停止，可以关掉程序窗口了。');
    document.getElementById('conn').textContent='已停止';
  });
+};
+document.getElementById('preset-select').onchange=showPresetDetail;
+document.getElementById('preset-form').onsubmit=function(ev){
+ ev.preventDefault();
+ var name=document.getElementById('preset-select').value;
+ if(!isPlaceholder&&!confirm('套用场景会覆盖当前的服务列表，确定吗？'))return;
+ say('正在套用场景…');
+ post('/api/preset',{name:name,force:true}).then(function(r){
+   say(r.message||'已套用场景');return refresh();
+ }).catch(function(e){say('套用失败：'+e.message);});
 };
 document.getElementById('add').onsubmit=function(ev){
  ev.preventDefault();
@@ -303,6 +350,35 @@ def _history_rows(cfg, path, limit=12):
     return history.query(db, since=history.parse_since("7d"), limit=limit)
 
 
+def _is_placeholder(cfg):
+    """True while the config is still the untouched first-run template."""
+    svcs = (cfg.get("registry") or {}).get("services") or {}
+    return (list(svcs.keys()) == [PLACEHOLDER_KEY]
+            and (svcs.get(PLACEHOLDER_KEY) or {}).get("name") == PLACEHOLDER_NAME)
+
+
+def apply_preset(path, name, force=False):
+    """Replace the service list with a named scenario.
+
+    Refusing to overwrite by default is the important part: a user who already
+    saved their own ports must not lose them to one click. The console sends
+    force=True only after a browser-side confirm().
+    """
+    cfg = _load(path)
+    if not force and not _is_placeholder(cfg):
+        raise ValueError("配置里已经有服务了，套用场景会覆盖当前列表")
+    # A JSON object/array here would blow up on the dict lookup with TypeError;
+    # normalise it so every bad input becomes the same clean 400.
+    name = str(name or "")
+    try:
+        new_cfg = template.preset_config(name)
+    except ValueError:
+        raise ValueError("没有这个场景")
+    safeio.atomic_write_text(os.path.abspath(path), template.render(new_cfg))
+    count = len(new_cfg["registry"]["services"])
+    return "已套用场景 {}，共 {} 个服务。端口按你自己的实际情况改。".format(name, count)
+
+
 def state(path):
     """One JSON payload for the whole page. No secrets are included."""
     cfg, rows = _services_summary(path)
@@ -312,6 +388,8 @@ def state(path):
         "services": rows,
         "history": _history_rows(cfg, path),
         "service_count": len(rows),
+        "is_placeholder": _is_placeholder(cfg),
+        "presets": template.preset_list(),
     }
 
 
@@ -451,6 +529,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                                        {"key": k, "name": v.get("name"),
                                         "port": v.get("port")}
                                        for k, v in cli_mod._registry(cfg).items()]})
+            if route == "/api/presets":
+                return self._json({"presets": template.preset_list()})
             return self._json({"error": "not found"}, 404)
         except Exception as exc:
             return self._error(exc)
@@ -473,6 +553,12 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 return self._json(watchdog.run(self.cfg_path))
             if route == "/api/service":
                 msg = save_service(self.cfg_path, body.get("name"), body.get("port"))
+                return self._json({"ok": True, "message": msg})
+            if route == "/api/preset":
+                # Only a whitelisted preset name crosses this boundary; no raw
+                # config, path or command is accepted from the browser.
+                msg = apply_preset(self.cfg_path, body.get("name"),
+                                   force=bool(body.get("force")))
                 return self._json({"ok": True, "message": msg})
             if route == "/api/stop":
                 # shutdown() must not be called from the serving thread itself.
