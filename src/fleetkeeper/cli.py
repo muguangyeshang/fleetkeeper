@@ -22,7 +22,7 @@ import os
 import sys
 import time
 
-from . import discover, evidence, heartbeat, history, proc, redact, safeio, template, watchdog
+from . import discover, evidence, heartbeat, history, redact, safeio, template, watchdog
 from . import report as report_mod  # cmd_doctor has a local variable named `report`
 
 

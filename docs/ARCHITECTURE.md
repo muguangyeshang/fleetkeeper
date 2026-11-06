@@ -213,6 +213,11 @@ Other bounds:
 - SQLite writes are two inserts per sweep plus one per alert, with a
   retention prune on append.
 - `ui.py` caps request bodies at 64 KiB and binds only to `127.0.0.1`.
+- Loopback is not the whole story: the browser is shared with every page the
+  user opens, so `ConsoleHandler._admit()` also requires the `Host` header to
+  name this console (DNS rebinding), a same-origin `Origin` when one is sent
+  (cross-site requests), and `Content-Type: application/json` on writes
+  (simple cross-site POST needs no preflight). See `SECURITY.md`.
 - The browser console polls `/api/state` every 5 seconds; it does not hold a
   long-lived connection.
 - There is no cross-process lock on sweeps. Two overlapping crons can both
@@ -234,14 +239,16 @@ button actions. It has no CDN, external font, or third-party JS. The offline
 
 ## 9. Test strategy
 
-156 tests in 14 files. Real loopback sockets and real subprocesses are used
+175 tests in 15 files. Real loopback sockets and real subprocesses are used
 where a fake would hide the bug; pure logic uses monkeypatched fixtures.
+`python -m coverage run -m pytest -q` reports 81 % statement coverage; the
+untested remainder is mostly platform branches in `proc.py`.
 
 | File | Tests | What it locks |
 |---|---:|---|
-| `test_cli.py` | 14 | Command routing, `--config` on either side of the subcommand, init, html, history, logs |
-| `test_discover.py` | 23 | Product fingerprints against real loopback servers, canary executability, append-only writes, forged-candidate rejection, CLI and console routes |
-| `test_ui.py` | 20 | Real loopback console: routing, first-run config, service editing, sweep, timeline, report, stop |
+| `test_cli.py` | 17 | Command routing, `--config` on either side of the subcommand, init, html, history, logs |
+| `test_discover.py` | 27 | Product fingerprints against real loopback servers, canary executability, append-only writes, forged-candidate rejection, CLI and console routes |
+| `test_ui.py` | 27 | Real loopback console: routing, first-run config, service editing, sweep, timeline, report, stop, and the Host / Origin / content-type admission checks |
 | `test_manage.py` | 14 | Full dashboard controls, aggregate payload, config export, per-service update/pause/delete, heartbeat, log redaction, resident watch, concurrent evidence collection |
 | `test_watchdog.py` | 10 | Cooldown persistence, network-down suspension, pause gates, alert storms, clock skew, explicit empty gate with a simulated outage |
 | `test_regressions.py` | 10 | README-example canary reaching L4, bounded reads, one request per canary, defaults merging, config path isolation, three netstat dialects, unknown-PID tolerance |
@@ -252,12 +259,13 @@ where a fake would hide the bug; pure logic uses monkeypatched fixtures.
 | `test_report.py` | 7 | XSS escaping, five-rung ladder, P0 badges after JSON round-trip |
 | `test_evidence.py` | 6 | Rung escalation and canary downgrade |
 | `test_redact.py` | 6 | Keys, JWTs, private-key markers |
+| `test_proc.py` | 8 | Reserved/dead PID refusal, command-line mismatch refusal, a real kill of a real child, ops log, CIM table parsing and cache, hot path that must not read command lines |
 
 The wheel install and the frozen exe are exercised separately in first-run
 smoke runs from a clean directory with Python removed from `PATH`.
 
 ```bash
-python -m pytest -q              # 156 passed
+python -m pytest -q              # 175 passed
 python -m compileall -q src tests
 python -m build
 python -m twine check dist/*

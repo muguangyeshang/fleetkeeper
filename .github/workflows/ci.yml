@@ -56,5 +56,16 @@ jobs:
       - name: Byte-compile every module
         run: python -m compileall -q src
 
+      - name: Lint
+        run: python -m ruff check src tests scripts
+
       - name: Run the suite
         run: python -m pytest -q
+
+      # One job reports coverage. Running it on every matrix entry would print
+      # the same number six times and slow the matrix down for nothing.
+      - name: Coverage
+        if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
+        run: |
+          python -m coverage run --source=src/fleetkeeper -m pytest -q
+          python -m coverage report

@@ -167,7 +167,7 @@ def _run_core(config_path):
                 "WAN unreachable ({} unreachable); healing suspended".format(net_targets[0][0])))
         listeners_map = proc.listeners(set(ports))
         issues = []
-        for port, key in ports.items():
+        for port in ports:
             if port in gated_ports:
                 continue
             n = len(listeners_map.get(port, set()))

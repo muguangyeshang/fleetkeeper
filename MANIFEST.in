@@ -5,6 +5,9 @@ include CONTRIBUTING.md
 include SECURITY.md
 include RELEASING.md
 include start.bat
+# The spec is the single build source for the Windows exe; without it a user
+# who downloads the sdist cannot reproduce the binary.
+include fleetkeeper.spec
 recursive-include scripts *.py *.bat
 recursive-include config *.json
 recursive-include tests *.py

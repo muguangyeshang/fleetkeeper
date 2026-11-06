@@ -208,7 +208,7 @@ fleetkeeper/
   src/fleetkeeper/           16 standard-library modules
                              (discover.py, manage.py, page.py, ui.py, ...)
   scripts/                   exe entry point, build_exe.bat, acceptance harnesses
-  tests/                     156 pytest tests in 14 files
+  tests/                     175 pytest tests in 15 files
   docs/                      user guide, Chinese manual, architecture, sample page
   start.bat                  console launcher for machines with Python
   .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
@@ -578,7 +578,7 @@ and notification while fleetkeeper owns the gated restart.
 
 ## Tested
 
-156 pytest tests, including a fake live fleet over real HTTP sockets, product
+175 pytest tests, including a fake live fleet over real HTTP sockets, product
 fingerprinting against real loopback servers, a real loopback browser console
 exercised over HTTP (routing, first-run config, autodiscovery, service
 editing, per-service actions, heartbeat, log redaction, resident watch,

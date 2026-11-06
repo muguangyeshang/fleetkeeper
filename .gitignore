@@ -17,3 +17,9 @@ fleet.json
 *.bak_*
 PAUSE_LLM
 .venv/
+
+# Test tooling output
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/

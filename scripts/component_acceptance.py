@@ -56,6 +56,21 @@ def jbody(body):
     return json.loads(body)
 
 
+def _req_headers(base, path, payload=None, headers=None):
+    """Same as req() but lets a check lie about Host / Origin / content type."""
+    import urllib.error as _err
+    import urllib.request as _req
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = _req.Request(base + path, data=data,
+                           method="POST" if data is not None else "GET",
+                           headers=headers or {})
+    try:
+        r = _req.urlopen(request, timeout=20)
+        return r.status, "", r.read().decode("utf-8", "replace")
+    except _err.HTTPError as e:
+        return e.code, "", e.read().decode("utf-8", "replace")
+
+
 def run_http(base, cfg, work):
     # ---- read-only routes -------------------------------------------------
     code, ctype, page = req(base, "/")
@@ -115,6 +130,26 @@ def run_http(base, cfg, work):
           body.lstrip().lower().startswith("<!doctype html>") and
           "https://" not in body, (code, ctype))
     check("unknown GET route is 404", req(base, "/no-such-route")[0] == 404)
+
+    # ---- request admission: loopback is not the same as "only me" ---------
+    port = base.rsplit(":", 1)[1]
+    code, _, body = _req_headers(base, "/api/state",
+                                 headers={"Host": "evil.example:" + port})
+    check("foreign Host is refused (DNS rebinding)",
+          code == 403 and "只接受本机" in body, (code, body[:120]))
+    code, _, _ = _req_headers(base, "/api/state",
+                             headers={"Host": "localhost:" + port})
+    check("localhost Host is accepted", code == 200, code)
+    code, _, body = _req_headers(base, "/api/sweep", payload={},
+                                 headers={"Content-Type": "application/json",
+                                          "Origin": "https://evil.example"})
+    check("cross-site Origin is refused", code == 403 and "跨站" in body,
+          (code, body[:120]))
+    code, _, body = _req_headers(base, "/api/service/action",
+                                 payload={"action": "delete", "key": "x"},
+                                 headers={"Content-Type": "text/plain"})
+    check("non-JSON content type is refused", code == 400 and
+          "application/json" in body, (code, body[:120]))
 
     # ---- write routes -----------------------------------------------------
     code, _, body = req(base, "/api/service", {"name": "网关", "port": 59302})

@@ -121,8 +121,8 @@ def apply_preset(path, name, force=False):
     name = str(name or "")
     try:
         new_cfg = template.preset_config(name)
-    except ValueError:
-        raise ValueError("没有这个场景")
+    except ValueError as exc:
+        raise ValueError("没有这个场景") from exc
     safeio.atomic_write_text(os.path.abspath(path), template.render(new_cfg))
     count = len(new_cfg["registry"]["services"])
     return "已套用场景 {}，共 {} 个服务。端口按你自己的实际情况改。".format(name, count)
@@ -181,8 +181,8 @@ def save_service(path, name, port):
     name = str(name or "").strip()
     try:
         port = int(port)
-    except (TypeError, ValueError):
-        raise ValueError("端口必须是 1 到 65535 之间的数字")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("端口必须是 1 到 65535 之间的数字") from exc
     if not name or len(name) > 64:
         raise ValueError("服务名称要填 1 到 64 个字符")
     if not 1 <= port <= 65535:
@@ -232,6 +232,47 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         # Serving every asset to stderr makes the console window unreadable.
         pass
 
+    # -- request admission -------------------------------------------------
+    # Binding to loopback keeps the console off the network, but the browser
+    # is shared with every site the user visits. Two cheap checks close the
+    # two ways a web page can reach a local service:
+    #   * DNS rebinding: evil.example resolves to 127.0.0.1, so the browser
+    #     treats this console as same-origin and can read /api/state. It still
+    #     sends `Host: evil.example:PORT`, which is not a name we answer to.
+    #   * cross-site POST: text/plain bodies are "simple requests" with no
+    #     preflight, so any page could delete a service. Requiring
+    #     application/json forces a preflight this server never approves.
+    def _host_allowed(self):
+        host = (self.headers.get("Host") or "").strip().lower()
+        port = self.server.server_port
+        return host in ("127.0.0.1:{}".format(port),
+                        "localhost:{}".format(port),
+                        "[::1]:{}".format(port))
+
+    def _origin_allowed(self):
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if not origin:
+            return True                    # curl, scripts, same-tab navigation
+        port = self.server.server_port
+        return origin in ("http://127.0.0.1:{}".format(port),
+                          "http://localhost:{}".format(port),
+                          "http://[::1]:{}".format(port))
+
+    def _admit(self, need_json=False):
+        """Returns True when the request may proceed; answers 403 otherwise."""
+        if not self._host_allowed():
+            self._json({"error": "只接受本机 127.0.0.1 访问"}, 403)
+            return False
+        if not self._origin_allowed():
+            self._json({"error": "跨站请求被拒绝"}, 403)
+            return False
+        if need_json:
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0]
+            if ctype.strip().lower() != "application/json":
+                self._json({"error": "请求体必须是 application/json"}, 400)
+                return False
+        return True
+
     def _send(self, code, body, ctype="application/json; charset=utf-8",
               headers=None):
         if isinstance(body, str):
@@ -268,6 +309,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = parsed.path.rstrip("/") or "/"
+        if not self._admit():
+            return
         try:
             if route == "/":
                 return self._html(PAGE)
@@ -373,6 +416,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urlparse(self.path).path.rstrip("/") or "/"
+        # Every write goes through here, so admit before reading the body:
+        # a cross-site page must not even get its payload parsed.
+        if not self._admit(need_json=True):
+            return
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:

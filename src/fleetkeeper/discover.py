@@ -490,8 +490,8 @@ def _validate(candidate):
         raise ValueError("识别结果类型不合法")
     try:
         port = int(candidate.get("port"))
-    except (TypeError, ValueError):
-        raise ValueError("识别结果端口不合法")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("识别结果端口不合法") from exc
     if not 1 <= port <= 65535:
         raise ValueError("识别结果端口不合法")
     hp = candidate.get("health_path") or "/"

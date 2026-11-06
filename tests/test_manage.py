@@ -220,7 +220,6 @@ def test_check_and_heartbeat_routes(console):
     code, _, body = _req(base, "/api/heartbeat",
                          {"key": "example", "ok": True, "processed": 7})
     assert code == 200 and "心跳" in _json(body)["message"]
-    cfg = json.loads(open(cfg_path, encoding="utf-8").read())
     hb_dir = os.path.join(os.path.dirname(cfg_path), "runtime", "heartbeat")
     hb = os.path.join(hb_dir, "example.json")
     assert os.path.isfile(hb)

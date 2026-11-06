@@ -402,3 +402,62 @@ def test_serve_explains_a_taken_port(tmp_path, monkeypatch, capsys):
     assert ui.serve(str(cfg), port=8899, open_browser=False) == 2
     out = capsys.readouterr().out
     assert "已经被别的程序占用" in out and "8899" in out
+
+
+# --- request admission -----------------------------------------------------
+# The console is loopback-only, but the browser is not: a page on any site can
+# reach 127.0.0.1, and a rebinding domain resolves there too. These three
+# checks are what keeps "local" from meaning "open to every tab".
+
+def _raw(base, path, payload=None, headers=None):
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        base + path, data=data, method="POST" if data else "GET",
+        headers=headers or {})
+    try:
+        r = urllib.request.urlopen(req, timeout=20)
+        return r.status, r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8")
+
+
+def test_get_refuses_a_foreign_host_header(console):
+    """DNS rebinding: the browser thinks it is same-origin with evil.example."""
+    base, _ = console
+    port = base.rsplit(":", 1)[1]
+    code, body = _raw(base, "/api/state", headers={"Host": "evil.example:" + port})
+    assert code == 403 and "只接受本机" in body
+
+
+def test_get_accepts_localhost_and_the_loopback_ip(console):
+    base, _ = console
+    port = base.rsplit(":", 1)[1]
+    for host in ("127.0.0.1:" + port, "localhost:" + port):
+        code, _ = _raw(base, "/api/ping", headers={"Host": host})
+        assert code == 200
+
+
+def test_post_refuses_a_cross_site_origin(console):
+    base, _ = console
+    code, body = _raw(base, "/api/sweep", payload={},
+                      headers={"Content-Type": "application/json",
+                               "Origin": "https://evil.example"})
+    assert code == 403 and "跨站" in body
+
+
+def test_post_refuses_a_plain_text_body(console):
+    """text/plain is a simple request: no preflight, so it must be rejected
+    by content type instead."""
+    base, _ = console
+    code, body = _raw(base, "/api/service/action",
+                      payload={"action": "delete", "key": "example"},
+                      headers={"Content-Type": "text/plain"})
+    assert code == 400 and "application/json" in body
+
+
+def test_post_accepts_the_consoles_own_origin(console):
+    base, cfg = console
+    code, body = _raw(base, "/api/sweep", payload={},
+                      headers={"Content-Type": "application/json",
+                               "Origin": base})
+    assert code == 200 and "issues" in body

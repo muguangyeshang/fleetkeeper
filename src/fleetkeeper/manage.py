@@ -85,8 +85,8 @@ def _check_local_path(value, field):
 def _check_port(value):
     try:
         port = int(value)
-    except (TypeError, ValueError):
-        raise ValueError("端口必须是 1 到 65535 之间的整数")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("端口必须是 1 到 65535 之间的整数") from exc
     if not 1 <= port <= 65535:
         raise ValueError("端口必须是 1 到 65535 之间的整数")
     return port
@@ -360,8 +360,8 @@ def update_service(path, key, patch):
     if "health_timeout" in patch:
         try:
             seconds = float(patch["health_timeout"])
-        except (TypeError, ValueError):
-            raise ValueError("健康检查超时必须是数字")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("健康检查超时必须是数字") from exc
         if not 0.5 <= seconds <= 30:
             raise ValueError("健康检查超时要在 0.5 到 30 秒之间")
         health = dict(item.get("health") or {})
@@ -382,8 +382,8 @@ def update_service(path, key, patch):
     if "heartbeat_period" in patch:
         try:
             period = int(patch["heartbeat_period"])
-        except (TypeError, ValueError):
-            raise ValueError("心跳周期必须是整数秒")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("心跳周期必须是整数秒") from exc
         if not 5 <= period <= 86400:
             raise ValueError("心跳周期要在 5 到 86400 秒之间")
         item["heartbeat_period"] = period
@@ -412,8 +412,8 @@ def write_heartbeat(path, key, processed=None, ok=True):
     if processed is not None:
         try:
             processed = int(processed)
-        except (TypeError, ValueError):
-            raise ValueError("处理条数必须是整数")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("处理条数必须是整数") from exc
     hb_dir = cli_mod._hb_dir(cfg, path)
     heartbeat.write(k, processed=processed, ok=bool(ok), directory=hb_dir)
     return "已给 {} 写入一条心跳（{}）".format(
@@ -527,8 +527,8 @@ class WatchLoop(object):
     def start(self, interval=DEFAULT_INTERVAL):
         try:
             seconds = int(interval)
-        except (TypeError, ValueError):
-            raise ValueError("守护间隔必须是整数秒")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("守护间隔必须是整数秒") from exc
         if not MIN_INTERVAL <= seconds <= MAX_INTERVAL:
             raise ValueError("守护间隔要在 {} 到 {} 秒之间".format(
                 MIN_INTERVAL, MAX_INTERVAL))

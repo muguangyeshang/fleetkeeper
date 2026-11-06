@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Outbound alert channels: real local HTTP receiver, real subprocess."""
 import json
-import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

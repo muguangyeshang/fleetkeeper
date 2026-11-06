@@ -168,7 +168,6 @@ def evaluate_service(svc):
     pids = [o["pid"] for o in owners if o.get("pid")]
     real_pids = [p for p in pids if isinstance(p, int) and p > 0]
     out["pids"] = real_pids
-    out["cmdlines"] = [(o.get("cmdline") or "")[:120] for o in owners]
 
     if not pids:
         out["issues"].append("no process listening")

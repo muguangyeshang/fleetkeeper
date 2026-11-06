@@ -31,14 +31,31 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 
+[project.urls]
+Homepage = "https://github.com/muguangyeshang/fleetkeeper"
+Repository = "https://github.com/muguangyeshang/fleetkeeper"
+Issues = "https://github.com/muguangyeshang/fleetkeeper/issues"
+Changelog = "https://github.com/muguangyeshang/fleetkeeper/blob/main/CHANGELOG.md"
+Security = "https://github.com/muguangyeshang/fleetkeeper/blob/main/SECURITY.md"
+
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.6", "coverage>=7"]
 
 [project.scripts]
 fleetkeeper = "fleetkeeper.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Lint settings live here so a contributor gets the same verdict as CI.
+# E501 is off on purpose: this code carries long explanatory comments.
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

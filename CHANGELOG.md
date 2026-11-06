@@ -5,7 +5,35 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 
 ## Unreleased
 
-_No changes yet._
+### Security
+- The console now checks who is calling, not just which interface it listens
+  on. A loopback bind does not stop a web page: any site the user visits can
+  POST to `127.0.0.1` as a "simple" request, and a rebinding domain can even
+  read the replies. `ConsoleHandler._admit()` requires the `Host` header to be
+  `127.0.0.1:PORT` / `localhost:PORT`, requires a same-origin `Origin` when one
+  is sent, and requires `Content-Type: application/json` on every write.
+  `SECURITY.md` now documents the threat model instead of claiming there is no
+  unauthenticated control plane.
+
+### Bug Fixes
+- Without `psutil`, the Windows fallback could not read a command line and
+  answered with the string `"<psutil missing; command line unreadable>"`.
+  `proc.verify_pid()` compares that string against the expected substring, so
+  every validated kill was refused: the safety guard had become a hard stop,
+  and the frozen exe ships without psutil. Command lines now come from one
+  cached CIM query (`wmic` is gone from current Windows builds), read only when
+  a caller asks for them, so the 5-second poll does not pay for a shell launch.
+- `evidence.py` collected `cmdlines` into every row and nothing ever read it;
+  removed, together with the cost it implied.
+
+### Improvements
+- Packaging and tooling: `[project.urls]` (PyPI page had no links at all),
+  `fleetkeeper.spec` added to `MANIFEST.in` so the exe is reproducible from the
+  sdist, `ruff` and `coverage` in the `dev` extra, a `[tool.ruff]` section in
+  `pyproject.toml`, and lint plus one coverage run in CI.
+- Eight `raise ... from exc` fixups so a translated error keeps its cause, three
+  unused imports and two dead variables removed: `ruff check src tests scripts`
+  is clean on `E,F,W,B`.
 
 ## 0.2.0 - 2026-11-06
 
