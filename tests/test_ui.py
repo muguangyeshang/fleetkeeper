@@ -200,11 +200,17 @@ def test_root_page_offers_a_first_run_scenario_picker(console):
     base, _ = console
     code, _, body = _req(base, "/")
     assert code == 200
-    assert "第一次用，先选一个场景" in body
+    assert "备选：手动选一个场景" in body
     assert 'id="preset-select"' in body
     assert "套用场景" in body
     # A red card on first run is explained, not left looking like a crash.
-    assert "示例占位服务" in body
+    assert "占位示例服务" in body
+    # The first screen now discovers services instead of asking for a port.
+    assert "自动识别本机服务" in body
+    assert 'id="btn-discover"' in body
+    assert 'id="btn-discover-add"' in body
+    assert 'id="discover-list"' in body
+    assert "/api/discover" in body
     assert "<script src" not in body
 
 

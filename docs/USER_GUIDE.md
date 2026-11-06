@@ -65,18 +65,24 @@ of this:
 2. Binds an HTTP console to `127.0.0.1` on an ephemeral port.
 3. Opens the default browser. A console window stays open; closing it stops
    the program.
-4. Shows one placeholder service. A red card here is expected: nothing is
-   listening on the placeholder port. The first-run panel says so explicitly
-   and offers a scenario picker. Saving a real name and port also replaces it.
+4. Scans local listening ports and fingerprints the AI services already
+   running on the machine. High-confidence matches are written into
+   `fleet.json` automatically while the config is still the untouched
+   placeholder; the rest are offered as a checkbox list. The placeholder is
+   removed as soon as at least one real service is added. A red card for any
+   remaining placeholder is expected: nothing is listening on its port.
+   A scenario picker and a manual name+port form remain as fallbacks.
 
 Pass `--no-browser` to `start` when running headless. The console exposes
 `GET /`, `GET /api/state`, `GET /api/history`, `GET /api/config`,
-`GET /api/presets`, `GET /report`, `POST /api/sweep`, `POST /api/service`,
-`POST /api/preset`, `POST /api/stop`. Two routes rewrite config:
-`/api/service` edits one entry, `/api/preset` replaces the list. Neither
+`GET /api/presets`, `GET /api/discover`, `GET /report`, `POST /api/sweep`,
+`POST /api/service`, `POST /api/preset`, `POST /api/discover`,
+`POST /api/stop`. Three routes rewrite config:
+`/api/service` edits one entry, `/api/preset` replaces the list, and
+`/api/discover` appends server-side scan results identified by id. None
 accepts a raw config, a path or a command. `/api/preset` refuses to overwrite
 saved services unless `force` is true, which the browser sends only after a
-confirm dialog.
+confirm dialog; `/api/discover` only appends and skips ports already present.
 
 ### 3.1 Starting scenarios
 
@@ -105,6 +111,8 @@ fleetkeeper                                            open the browser console
 fleetkeeper start [--port N] [--no-browser]             same console, explicit
 fleetkeeper init [--config FILE] [--preset NAME] [--force]  write a runnable config
 fleetkeeper init --list-presets                            show starting scenarios
+fleetkeeper init --discover [--discover-timeout S]         init + autodiscovery
+fleetkeeper discover [--apply] [--json] [--ports P,P]      find local AI services
 fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
 fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis
 fleetkeeper heartbeat SERVICE [--processed N] [--fail] [--proof ...]  write a heartbeat
@@ -117,6 +125,27 @@ fleetkeeper logs SERVICE [--tail N] [--raw]             service logs, redacted b
 `--json` and `--html` are mutually exclusive. `--html` with no filename writes
 the document to stdout for piping. `--proof` accepts `business`,
 `process_alive`, or `protocol_only`.
+
+### `discover`
+
+`discover` is read-only unless `--apply` is given. It reads the OS listening
+table, probes `127.0.0.1` on `/`, `/api/tags`, `/v1/models`, `/system_stats`
+(GET only, 0.6 s timeout, 16 KiB body cap), and classifies each responder.
+`--apply` appends only `high` confidence rows; saved services are never
+overwritten and a port already in the registry is skipped. `--json --apply`
+emits exactly one JSON object containing both the scan and the `apply` report.
+
+```bash
+fleetkeeper discover --ports 11434,8080,8000
+fleetkeeper --config fleet.json discover --apply
+fleetkeeper --config fleet.json discover --max-ports 20 --timeout 0.3 --json
+```
+
+The browser console runs the same engine on first load with an untouched
+config. `GET /api/discover` scans and caches, `POST /api/discover` accepts
+`{"auto": true}` or `{"ids": [...]}`. The browser sends ids, never a service
+object; the server resolves them against its own cache and validates every
+health path and canary before writing.
 
 A real two-service run (one live local HTTP endpoint with a canary, one dead
 port):

@@ -101,6 +101,7 @@ external references.
 - [Why this exists](#why-this-exists)
 - [The evidence ladder](#the-evidence-ladder)
 - [Quick start](#quick-start)
+- [Automatic discovery](#automatic-discovery)
 - [Alerts, history and the status page](#alerts-history-and-the-status-page)
 - [Config](#config)
 - [Platform notes](#platform-notes)
@@ -178,9 +179,9 @@ fleetkeeper/
   MANIFEST.in                sdist contents
   config/fleet.example.json  filled-out config
   config/ollama-stack.example.json  the built-in local-ai preset, checked in
-  src/fleetkeeper/           13 standard-library modules
-  scripts/                   exe entry point and build_exe.bat
-  tests/                     115 pytest tests in 12 files
+  src/fleetkeeper/           14 standard-library modules (incl. discover.py)
+  scripts/                   exe entry point, build_exe.bat, acceptance harnesses
+  tests/                     142 pytest tests in 13 files
   docs/                      user guide, Chinese manual, architecture, sample page
   start.bat                  console launcher for machines with Python
   .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
@@ -253,6 +254,11 @@ fleetkeeper refuses to pretend otherwise.
 #    It creates fleet.json, opens the browser console, and offers a scenario
 #    picker on the first screen.
 
+# 0b. let it find the services that are already running on this machine
+fleetkeeper discover                 # report only, writes nothing
+fleetkeeper discover --apply         # append the confident ones to fleet.json
+fleetkeeper discover --json --apply  # one machine-readable object on stdout
+
 # 1. see the built-in starting scenarios
 fleetkeeper init --list-presets
 
@@ -287,6 +293,44 @@ asks for confirmation, and the API refuses to overwrite without `force`.
 `--config` works either before or after the subcommand:
 `fleetkeeper --config fleet.json doctor` and
 `fleetkeeper doctor --config fleet.json` are equivalent.
+
+## Automatic discovery
+
+Typing a name and a port was the last manual step on the first run. It is gone.
+
+On the first page load with an untouched config, the console scans the
+machine's own listening TCP ports, fingerprints each one over loopback HTTP,
+and writes the confident matches into `fleet.json` before anything is clicked.
+The same engine is `fleetkeeper discover`.
+
+| Recognised | Fingerprint | Business canary written |
+| --- | --- | --- |
+| Ollama / Ollama-compatible proxy | `GET /api/tags` returns a `models` list, or root body `Ollama is running` | `/api/tags`, `json_path=models`, `min_items=1` |
+| OpenAI-compatible (LM Studio, vLLM, LocalAI, gateways) | `GET /v1/models` returns a `data` list | `/v1/models`, `json_path=data`, `min_items=1` |
+| ComfyUI | `GET /system_stats` returns `system` | `/system_stats`, `json_path=system`, `min_items=1` |
+| Open WebUI / Gradio | root HTML markers | none (liveness only) |
+| anything else answering HTTP | a status line | none |
+
+`high` confidence rows are auto-added on a first-run config; `medium` and
+`low` rows are listed with a checkbox instead. Health and canary paths always
+differ, otherwise `canary_is_protocol_only` would withhold L4. Existing
+services are never overwritten: a port already in the registry is skipped, and
+the untouched `Example Service` placeholder is dropped only when at least one
+real service was added.
+
+Scope: `127.0.0.1` only, GET only, read-only paths only, capped response
+bodies, one bulk process-table read, 60 ports / 16 workers / 0.6 s per probe.
+A desktop with 48 HTTP listeners scans in about 2 seconds. Nothing is sent
+off-host, response bodies never reach the browser, and the image names of
+unrecognised local programs are not displayed. The browser sends candidate
+**ids**; the server resolves them against its own scan cache, so no health
+path, canary URL or command can be injected through the API.
+
+```bash
+fleetkeeper discover --ports 11434,8080,8000
+fleetkeeper discover --max-ports 20 --timeout 0.3
+fleetkeeper init --config fleet.json --discover --force
+```
 
 ### Wiring a service into heartbeats (one line)
 
@@ -462,6 +506,8 @@ fleetkeeper                                            open the browser console
 fleetkeeper start [--port N] [--no-browser]             same console, explicit
 fleetkeeper init [--config FILE] [--preset NAME] [--force]  write a runnable config
 fleetkeeper init --list-presets                            show starting scenarios
+fleetkeeper init --discover [--discover-timeout S]         init + autodiscovery
+fleetkeeper discover [--apply] [--json] [--ports P,P]      find local AI services
 fleetkeeper status [SERVICE] [--json | --html [FILE]]   evidence ladder per service
 fleetkeeper doctor [--json | --html [FILE]]             fleet-wide diagnosis (P0 vs uncovered)
 fleetkeeper heartbeat SERVICE [--fail] [--proof ...]    write one heartbeat manually
@@ -504,9 +550,10 @@ and notification while fleetkeeper owns the gated restart.
 
 ## Tested
 
-115 pytest tests, including a fake live fleet over real HTTP sockets, a real
-loopback browser console exercised over HTTP (routing, first-run config,
-service editing, sweep, timeline, report, graceful stop), a frozen-exe
+142 pytest tests, including a fake live fleet over real HTTP sockets, product
+fingerprinting against real loopback servers, a real loopback browser console
+exercised over HTTP (routing, first-run config, autodiscovery, service
+editing, sweep, timeline, report, graceful stop), a frozen-exe
 double-click smoke run, a real local webhook receiver and a real subprocess
 command hook:
 cooldown persistence across green sweeps, duplicate-instance handling,
@@ -535,6 +582,15 @@ the OS on each launch). The page probes `GET /api/ping` to tell "process
 exited" from "state() failed", pauses its 5-second polling after three
 consecutive failures, and shows a reconnect button. Restart the exe and open
 the new URL printed in its window; close the stale tab.
+
+**How does it know which services I run, and what if it gets one wrong?**
+It reads the OS listening-port table, then sends GETs to `127.0.0.1` on
+`/`, `/api/tags`, `/v1/models` and `/system_stats`. Only high-confidence
+matches are written automatically, and only while the config is still the
+untouched first-run placeholder. Everything else is shown in a checkbox list.
+A wrong entry is just a registry row: change its port in the console, or run
+`fleetkeeper init --force` to start over. Nothing is killed, restarted or
+reconfigured during discovery.
 
 **Why does a service with `L4_BUSINESS` still show `??`?**
 L4 proves a canary passed. It does not prove the service completed a unit of

@@ -22,13 +22,14 @@ never change a healing decision.** That constraint produced the two-phase
 
 ## 2. Module map
 
-13 modules, 2,899 lines, zero runtime imports outside the standard library.
+14 modules, 3,945 lines, zero runtime imports outside the standard library.
 `psutil` is used opportunistically when present and is never required.
 
 | Module | Lines | Responsibility | Public surface |
 |---|---:|---|---|
-| `cli.py` | 442 | Argument parsing, command dispatch, view assembly | `build_parser()`, `main()`, `cmd_*` |
-| `ui.py` | 523 | Local browser console, inline CSS/JS-free page, HTTP routes | `serve()`, `make_server()`, `ConsoleHandler` |
+| `cli.py` | 526 | Argument parsing, command dispatch, view assembly | `build_parser()`, `main()`, `cmd_*` |
+| `ui.py` | 834 | Local browser console, inline CSS/JS-free page, HTTP routes | `serve()`, `make_server()`, `ConsoleHandler` |
+| `discover.py` | 560 | Localhost listener scan, product fingerprints, registry generation | `scan()`, `apply_config()`, `SIGNATURES` |
 | `watchdog.py` | 379 | Sweep, gates, healing, alert dedup, wrapper | `run()`, `net_gate()`, `load_state()`, `save_state()` |
 | `report.py` | 229 | Self-contained offline HTML | `normalize()`, `render()` |
 | `proc.py` | 222 | Listener enumeration, PID verification, process ops | `listeners()`, `proc_info()`, `verify_pid()`, `kill_pid()` |
@@ -43,7 +44,27 @@ never change a healing decision.** That constraint produced the two-phase
 
 Dependency direction is one-way. `evidence` knows nothing about `watchdog`;
 `notify` and `history` know nothing about healing; `cli` and `ui` are the only
-modules that assemble a view. `safeio` and `redact` are leaves.
+modules that assemble a view. `safeio` and `redact` are leaves. `discover`
+depends on `evidence` (bounded GET), `proc` (listener table), `redact`,
+`safeio` and `template`, but never on `watchdog`: discovering a service must
+not be able to heal, kill or restart anything.
+
+### Discovery path
+
+```
+GET /api/discover -> proc.listeners() -> ordered ports (known AI ports first)
+  -> phase 1: GET / on every port, 16 workers
+  -> phase 2: GET /api/tags + /v1/models + /system_stats on HTTP responders
+  -> one bulk process-table read (psutil.process_iter, else a single tasklist)
+  -> SIGNATURES -> candidates (high/medium/low) -> server-side cache
+POST /api/discover {ids} -> validate -> safeio.atomic_write_text(fleet.json)
+```
+
+Cost is `O(P + 3H)` GETs, `P <= 60`, `H` = HTTP responders, bounded by 16
+workers and a 0.6 s per-probe timeout. A 48-responder desktop completes in
+about 2 s. Response bodies stay in the process; only a redacted reason string
+crosses the HTTP boundary. Candidates are validated again at write time so a
+crafted id cannot introduce an arbitrary health path or canary type.
 
 ## 3. Data flow
 
@@ -201,13 +222,14 @@ button actions. It has no CDN, external font, or third-party JS. The offline
 
 ## 9. Test strategy
 
-99 tests in 11 files. Real loopback sockets and real subprocesses are used
+142 tests in 13 files. Real loopback sockets and real subprocesses are used
 where a fake would hide the bug; pure logic uses monkeypatched fixtures.
 
 | File | Tests | What it locks |
 |---|---:|---|
 | `test_cli.py` | 14 | Command routing, `--config` on either side of the subcommand, init, html, history, logs |
-| `test_ui.py` | 11 | Real loopback console: routing, first-run config, service editing, sweep, timeline, report, stop |
+| `test_discover.py` | 23 | Product fingerprints against real loopback servers, canary executability, append-only writes, forged-candidate rejection, CLI and console routes |
+| `test_ui.py` | 20 | Real loopback console: routing, first-run config, service editing, sweep, timeline, report, stop |
 | `test_watchdog.py` | 10 | Cooldown persistence, network-down suspension, pause gates, alert storms, clock skew, explicit empty gate with a simulated outage |
 | `test_regressions.py` | 10 | README-example canary reaching L4, bounded reads, one request per canary, defaults merging, config path isolation, three netstat dialects, unknown-PID tolerance |
 | `test_safeio.py` | 9 | Atomic replace, backups, lease conflicts, baseline hash across renewal |
@@ -222,7 +244,7 @@ The wheel install and the frozen exe are exercised separately in first-run
 smoke runs from a clean directory with Python removed from `PATH`.
 
 ```bash
-python -m pytest -q              # 99 passed
+python -m pytest -q              # 142 passed
 python -m compileall -q src tests
 python -m build
 python -m twine check dist/*

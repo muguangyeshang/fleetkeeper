@@ -6,6 +6,21 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- Automatic discovery replaces the last manual first-run step. `discover.py`
+  enumerates local listening ports, fingerprints Ollama / Ollama-compatible
+  proxies, OpenAI-compatible endpoints (LM Studio, vLLM, LocalAI, gateways),
+  ComfyUI, Open WebUI and Gradio over loopback GETs, and generates registry
+  entries with real business canaries. The console scans on first load and
+  auto-applies `high` confidence rows when the config is still the untouched
+  placeholder; everything else is a checkbox list. `fleetkeeper discover
+  [--apply] [--json] [--ports P,P]` and `fleetkeeper init --discover` are the
+  CLI equivalents. Existing services are never overwritten, and the browser
+  sends candidate ids only -- the server resolves them against its own scan
+  cache and revalidates every health path and canary before writing.
+- Discovery cost: one bulk process-table read instead of one `tasklist` per
+  port, flattening phase-2 probes to 3 paths per HTTP port. A real desktop
+  with 48 HTTP listeners went from 19.7 s to 1.9 s, and Chinese image names
+  are decoded from the Windows ANSI code page instead of arriving as mojibake.
 - `sweep` and the status cards answer different questions: a sweep checks
   processes and ports, the cards grade L0-L4 business evidence. A green
   "问题 0 条" beside a red L0 card looked like a bug, so the console now

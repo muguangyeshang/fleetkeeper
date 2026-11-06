@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.join(ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from fleetkeeper import history, redact, report, safeio, template, ui  # noqa: E402
+from fleetkeeper import discover, history, redact, report, safeio, template, ui  # noqa: E402
 
 RESULTS = []
 
@@ -64,7 +64,8 @@ def run_http(base, cfg, work):
         ('id="' + i + '"') in page for i in (
             "btn-check", "btn-sweep", "btn-report", "btn-stop",
             "btn-reconnect", "preset-select", "preset-form", "add",
-            "auto", "msg", "cards", "timeline", "conn")), page[:200])
+            "auto", "msg", "cards", "timeline", "conn",
+            "btn-discover", "btn-discover-add", "discover-list")), page[:200])
     check("page is fully offline",
           "<script src" not in page and "<link " not in page and
           "https://" not in page and "cdn" not in page.lower())
@@ -190,6 +191,70 @@ def run_http(base, cfg, work):
     shutil.copy2(backup, cfg)
     check("state recovers after the config is restored",
           req(base, "/api/state")[0] == 200)
+
+    # ---- autodiscovery: read-only GET, ids-only POST ----------------------
+    port = 59401
+    fake = {
+        "scanned_ports": [port], "http_ports": [port], "elapsed_ms": 1,
+        "source": "test", "auto_applied": 0,
+        "recommended": ["ollama-{}".format(port)],
+        "candidates": [{
+            "id": "ollama-{}".format(port), "kind": "ollama",
+            "name": "Ollama", "port": port,
+            "pid": None, "process": "ollama.exe", "confidence": "high",
+            "evidence": "GET /api/tags 返回 models 列表",
+            "health_path": "/", "status": 200, "recommended": True,
+            "canary": {"type": "http", "path": "/api/tags",
+                       "expect": {"status": 200, "json_path": "models",
+                                  "min_items": 1}},
+        }],
+    }
+    real_scan = discover.scan
+    discover.scan = lambda **kw: dict(fake)
+    try:
+        before = open(cfg, encoding="utf-8").read()
+        code, _, body = req(base, "/api/discover")
+        got = jbody(body) if code == 200 else {}
+        check("GET /api/discover returns candidates", code == 200 and
+              got.get("candidates", [{}])[0].get("kind") == "ollama",
+              (code, body[:120]))
+        check("GET /api/discover writes nothing",
+              open(cfg, encoding="utf-8").read() == before)
+
+        code, _, body = req(base, "/api/discover", {"ids": "ollama-59401"})
+        check("POST /api/discover rejects non-array ids", code == 400 and
+              "ids 必须是数组" in body, (code, body[:120]))
+
+        before_services = jbody(open(cfg, encoding="utf-8").read())[
+            "registry"]["services"]
+        code, _, body = req(base, "/api/discover", {"auto": True})
+        out = jbody(body) if code == 200 else {}
+        check("POST /api/discover auto-applies a cached candidate",
+              code == 200 and out.get("auto_applied") == 1 and
+              "已自动识别" in out.get("message", ""), (code, body[:160]))
+        saved = jbody(open(cfg, encoding="utf-8").read())["registry"]["services"]
+        # Earlier checks already saved services, so discovery must append and
+        # preserve every existing entry rather than replace the list.
+        check("discovery appends without clobbering saved services",
+              len(saved) == len(before_services) + 1 and
+              all(k in saved and saved[k] == v
+                  for k, v in before_services.items()) and
+              "auto{}".format(port) in saved,
+              (list(before_services), list(saved)))
+        check("discovery writes a real business canary",
+              saved.get("auto{}".format(port), {}).get("canary", {}).get(
+                  "path") == "/api/tags")
+
+        code, _, body = req(base, "/api/discover", {
+            "ids": [],
+            "service": {"name": "evil", "port": 1,
+                        "health": {"path": "http://example.com"},
+                        "canary": {"type": "command", "path": "/x"}}})
+        check("POST /api/discover ignores a forged service object",
+              code == 200 and jbody(open(cfg, encoding="utf-8").read())
+              ["registry"]["services"].keys() == saved.keys(), (code, body[:120]))
+    finally:
+        discover.scan = real_scan
 
     # ---- shutdown, always last -------------------------------------------
     code, _, body = req(base, "/api/stop", {})

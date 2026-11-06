@@ -15,7 +15,25 @@ if (!process.argv[2]) {
 }
 const source = fs.readFileSync(process.argv[2], 'utf8');
 
-function makeEnv(stateFailure, pingFailure) {
+const discoveryPayload = {
+  scanned_ports: [11434], http_ports: [11434], elapsed_ms: 12,
+  auto_applied: 1, message: '已自动识别并加入 1 个服务',
+  candidates: [{
+    id: 'ollama-11434', kind: 'ollama', name: 'Ollama',
+    port: 11434, confidence: 'high', recommended: true,
+    evidence: 'GET /api/tags 返回 models 列表'
+  }]
+};
+const statePayload = {
+  generated_at: '2026-11-06 20:00:00', config_path: 'fleet.json',
+  services: [{name: 'Example Service', port: 8080, level: 'L0_CONFIG',
+              heartbeat: 'NO_HEARTBEAT', pids: [], issues: []}],
+  history: [], service_count: 1, is_placeholder: true,
+  presets: [{name: 'empty', label: '空白起步',
+             services: [{name: 'Example Service', port: 8080}]}]
+};
+
+function makeEnv(stateFailure, pingFailure, discoveryFailure) {
   const nodes = {};
   const el = (id) => {
     if (!nodes[id]) {
@@ -27,14 +45,17 @@ function makeEnv(stateFailure, pingFailure) {
     }
     return nodes[id];
   };
-  // The reconnect button starts hidden in the real HTML.
+  // The reconnect button starts hidden in the real HTML. Pre-create msg so
+  // boot() can also report a healthy page that never calls say().
   el('btn-reconnect').style.display = 'none';
+  el('msg');
   const timers = [];
   const okJson = (obj) => Promise.resolve({
     ok: true, status: 200, json: () => Promise.resolve(obj)
   });
   const fetch = (path) => {
     if (path === '/api/state') {
+      if (stateFailure === 'ok') return okJson(statePayload);
       if (stateFailure === 'network') {
         return Promise.reject(new TypeError('Failed to fetch'));
       }
@@ -55,6 +76,12 @@ function makeEnv(stateFailure, pingFailure) {
       }
       return okJson({ok: true, pid: 1, uptime: 1.0});
     }
+    if (path === '/api/discover') {
+      if (discoveryFailure === 'network') {
+        return Promise.reject(new TypeError('Failed to fetch'));
+      }
+      return okJson(discoveryPayload);
+    }
     return Promise.reject(new TypeError('Failed to fetch'));
   };
   const env = {
@@ -72,8 +99,8 @@ function makeEnv(stateFailure, pingFailure) {
   return env;
 }
 
-async function boot(stateFailure, pingFailure) {
-  const env = makeEnv(stateFailure, pingFailure);
+async function boot(stateFailure, pingFailure, discoveryFailure) {
+  const env = makeEnv(stateFailure, pingFailure, discoveryFailure);
   const ctx = vm.createContext(env);
   vm.runInContext(source, ctx, {filename: 'console-page.js'});
   const settle = () => new Promise((r) => setTimeout(r, 40));
@@ -153,6 +180,36 @@ function check(label, cond, detail) {
   check('stop -> explained',
     stopping.env.nodes.msg.textContent.indexOf('重新双击 fleetkeeper.exe') !== -1,
     stopping.env.nodes.msg.textContent);
+
+  // 6. A first successful load must discover services by itself: no name,
+  //    no port, no click. The placeholder config triggers an auto-apply.
+  const first = await boot('ok', null);
+  check('first load -> autodiscovery ran',
+    first.env.nodes['discover-text'].textContent.indexOf('扫描了 1 个本机端口') !== -1 &&
+    first.env.nodes['discover-text'].textContent.indexOf('已自动加入 1 个') !== -1,
+    first.env.nodes['discover-text'].textContent);
+  check('first load -> candidate rendered',
+    first.env.nodes['discover-list'].innerHTML.indexOf('Ollama') !== -1 &&
+    first.env.nodes['discover-list'].innerHTML.indexOf('disc-chk-0') !== -1,
+    first.env.nodes['discover-list'].innerHTML);
+  check('first load -> auto-apply message',
+    first.env.nodes.msg.textContent.indexOf('已自动识别并加入 1 个服务') !== -1,
+    first.env.nodes.msg.textContent);
+  first.env.nodes['btn-discover-add'].onclick();
+  await new Promise((r) => setTimeout(r, 40));
+  check('manual add -> selected ids are posted',
+    first.env.nodes.msg.textContent.indexOf('已自动识别并加入') !== -1 ||
+    first.env.nodes.msg.textContent.indexOf('已写入配置') !== -1,
+    first.env.nodes.msg.textContent);
+
+  // 7. A failed scan on a healthy page must not print a restart instruction
+  //    or leave the "scanning" placeholder text on screen.
+  const scanFail = await boot('ok', null, 'network');
+  check('scan failure -> honest text, no restart advice',
+    scanFail.env.nodes['discover-text'].textContent.indexOf('这次没扫成') !== -1 &&
+    scanFail.env.nodes.msg.textContent.indexOf('重新双击') === -1,
+    scanFail.env.nodes['discover-text'].textContent + ' | ' +
+    scanFail.env.nodes.msg.textContent);
 
   if (process.exitCode) {
     console.error('console error-path verification FAILED');

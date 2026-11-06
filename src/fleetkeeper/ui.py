@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import cli as cli_mod
-from . import evidence, heartbeat, history, redact, safeio, template, watchdog
+from . import discover, evidence, heartbeat, history, redact, safeio, template, watchdog
 from . import report as report_mod
 
 MAX_BODY_BYTES = 65536
@@ -103,8 +103,19 @@ code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
   <span id="conn">已连接</span>
 </header>
 <main>
+  <section class="panel" id="discover-panel">
+    <h2>自动识别本机服务</h2>
+    <p class="hint" id="discover-text">正在找你电脑上已经跑着的服务，不用自己填名字和端口…</p>
+    <div class="bar" style="border:0;border-radius:0;padding:8px 0;gap:8px">
+      <button id="btn-discover">重新扫描</button>
+      <button class="primary" id="btn-discover-add">把勾中的加进配置</button>
+      <span class="hint" id="discover-note" style="margin:0"></span>
+    </div>
+    <div id="discover-list"></div>
+  </section>
+
   <section class="panel" id="intro">
-    <h2>第一次用，先选一个场景</h2>
+    <h2>备选：手动选一个场景</h2>
     <p class="hint" id="intro-text"></p>
     <form id="preset-form">
       <select id="preset-select" name="preset"></select>
@@ -147,7 +158,7 @@ code{background:#f1f2f4;padding:2px 5px;border-radius:4px;font-size:12px}
 
   <details>
     <summary>这是什么 / 我该干什么</summary>
-    <p>1. 先把你自己的服务跑起来，然后在上面填上它的名字和端口，点「保存」。</p>
+    <p>1. 先把你自己的服务跑起来，页面打开时会自动扫描本机端口，识别到 Ollama、OpenAI 兼容接口、ComfyUI 这类服务会直接写进配置；没认出来的可以勾上手动加入，或者自己填名字和端口。</p>
     <p>2. 点「立即体检」看它活没活。显示红色表示没找到进程或端口不通，先去检查服务本身。</p>
     <p>3. 点「跑一次守护」会做一次检查：真挂了就按配置拉起来，断网时不会乱拉，出事发通知。</p>
     <p>4. 「最近发生了什么」能查到每次检查和每条告警，用来回答「昨晚四点为什么挂」。</p>
@@ -202,6 +213,7 @@ function api(path,opts){
 }
 var presetData=[],isPlaceholder=true,lastState=null;
 var pollTimer=null,stopped=false,inFlight=false,failures=0,MAX_FAILURES=3;
+var discoveryDone=false,discoveryBusy=false,discoveryData=[];
 function setConn(text,cls){
  var c=document.getElementById('conn');c.textContent=text;c.className=cls||'';
 }
@@ -230,13 +242,14 @@ function stopUI(){
  showReconnect(false);
  setConn('已停止','stopped');
  say('已停止，可以关掉程序窗口了。以后要用，重新双击 fleetkeeper.exe，用新窗口里打印的网址打开。');
- var ids=['btn-check','btn-sweep','btn-report','btn-stop'];
+ var ids=['btn-check','btn-sweep','btn-report','btn-stop',
+          'btn-discover','btn-discover-add'];
  for(var i=0;i<ids.length;i++)document.getElementById(ids[i]).disabled=true;
 }
 function renderPresets(st){
  isPlaceholder=!!st.is_placeholder;
  document.getElementById('intro-text').textContent=isPlaceholder?
-  '现在列表里的是示例占位服务，显示红色是正常现象，不是程序坏了。选一个接近你电脑情况的场景，或者直接在下面填你自己的服务名和端口。':
+  '程序会自动识别本机服务并写进配置。占位示例服务显示红色是正常现象，不是程序坏了。没识别到时再选一个接近你电脑情况的场景，或者直接在下面填端口。':
   '想换一套起始服务，可以在这里套用。套用会覆盖当前的服务列表。';
  presetData=st.presets||[];
  var sel=document.getElementById('preset-select'),h='';
@@ -255,6 +268,56 @@ function showPresetDetail(){
   parts.push(d.services[j].name+' :'+d.services[j].port);
  }
  document.getElementById('preset-detail').textContent='会写入 '+parts.join('、')+'。端口按你自己的实际情况改。';
+}
+function renderDiscovery(res){
+ discoveryData=(res&&res.candidates)||[];
+ var box=document.getElementById('discover-list'),h='';
+ var txt='扫描了 '+((res&&res.scanned_ports||[]).length)+' 个本机端口，认出 '+
+         discoveryData.length+' 个服务（'+(res&&res.elapsed_ms||0)+' 毫秒）。';
+ if(res&&res.auto_applied)txt+=' 已自动加入 '+res.auto_applied+' 个。';
+ document.getElementById('discover-text').textContent=txt;
+ document.getElementById('discover-note').textContent=
+   '「确定」默认勾上；「待确认」要你自己勾，加错了可以在下面改端口。';
+ if(!discoveryData.length){
+  box.innerHTML='<p class="empty">没有识别到正在运行的 HTTP 服务。先把服务启动起来再点「重新扫描」，或者在下面手动填一个端口。</p>';
+  return;
+ }
+ h='<table><thead><tr><th>加入</th><th>识别结果</th><th>端口</th><th>依据</th></tr></thead><tbody>';
+ for(var i=0;i<discoveryData.length;i++){
+  var c=discoveryData[i],tag=c.confidence==='high'?'确定':(c.confidence==='medium'?'可能':'待确认');
+  h+='<tr><td><input type="checkbox" id="disc-chk-'+i+'"'+(c.recommended?' checked':'')+'></td>'+
+     '<td>'+esc(c.name)+'<br><span class="hint">'+tag+'</span></td>'+
+     '<td>:'+esc(c.port)+'</td><td class="msg-cell">'+esc(c.evidence)+'</td></tr>';
+ }
+ box.innerHTML=h+'</tbody></table>';
+}
+function selectedIds(){
+ var ids=[];
+ for(var i=0;i<discoveryData.length;i++){
+  var box=document.getElementById('disc-chk-'+i);
+  if(box&&box.checked)ids.push(discoveryData[i].id);
+ }
+ return ids;
+}
+function runDiscovery(auto){
+ if(discoveryBusy||stopped)return Promise.resolve(false);
+ discoveryBusy=true;
+ // auto = first open with a placeholder config: scan AND write the confident
+ // rows in one round trip. Otherwise the GET is read-only.
+ var call=auto?post('/api/discover',{auto:true}):api('/api/discover');
+ return call.then(function(res){
+  discoveryBusy=false;discoveryDone=true;renderDiscovery(res);
+  if(auto&&res.auto_applied){
+   say('已自动识别并加入 '+res.auto_applied+' 个服务，不用再手填端口。');
+   return refresh().then(function(){return true;});
+  }
+  return true;
+ }).catch(function(e){
+  discoveryBusy=false;discoveryDone=true;
+  document.getElementById('discover-text').textContent='这次没扫成，服务列表不受影响。';
+  if(!auto)say('识别失败：'+explain(e),true);
+  return false;   // never bury a better state() error on the first load
+ });
 }
 function render(st){
  renderPresets(st);
@@ -295,6 +358,9 @@ function refresh(){
  return api('/api/state').then(function(st){
    inFlight=false;failures=0;
    lastState=st;render(st);showReconnect(false);startPoll();
+   // First successful load discovers the fleet once. A placeholder config
+   // also gets the confident rows written automatically: zero typing.
+   if(!discoveryDone)runDiscovery(!!st.is_placeholder);
    return true;
  }).catch(function(e){
    inFlight=false;
@@ -361,6 +427,20 @@ document.getElementById('btn-stop').onclick=function(){
  // shutdown() may kill the socket before the response is flushed, so both
  // the success and the failure branch mean the same thing to this page.
  post('/api/stop').then(stopUI,stopUI);
+};
+document.getElementById('btn-discover').onclick=function(){
+ say('正在识别本机服务…');
+ runDiscovery(false).then(function(ok){
+  if(ok)say('识别完成：'+discoveryData.length+' 个候选服务。勾上要加的，再点「把勾中的加进配置」。');
+ });
+};
+document.getElementById('btn-discover-add').onclick=function(){
+ var ids=selectedIds();
+ if(!ids.length){say('先在上面勾中要加入的服务。');return;}
+ say('正在写入配置…');
+ post('/api/discover',{ids:ids}).then(function(r){
+  say(r.message||'已写入配置');renderDiscovery(r);return refresh();
+ }).catch(function(e){say('写入失败：'+explain(e),true);});
 };
 document.getElementById('preset-select').onchange=showPresetDetail;
 document.getElementById('preset-form').onsubmit=function(ev){
@@ -634,6 +714,18 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                                        for k, v in cli_mod._registry(cfg).items()]})
             if route == "/api/presets":
                 return self._json({"presets": template.preset_list()})
+            if route == "/api/discover":
+                # Scanning is read-only. Cache the candidates server-side so
+                # the browser only ever sends ids back, never a service object.
+                q = parse_qs(parsed.query)
+                try:
+                    timeout = float((q.get("timeout") or [discover.DEFAULT_TIMEOUT])[0])
+                except (TypeError, ValueError):
+                    timeout = discover.DEFAULT_TIMEOUT
+                res = discover.scan(
+                    exclude_ports={self.server.server_port}, timeout=timeout)
+                self.server.fk_discovery = res
+                return self._json(res)
             return self._json({"error": "not found"}, 404)
         except Exception as exc:
             return self._error(exc)
@@ -668,6 +760,27 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 msg = apply_preset(self.cfg_path, body.get("name"),
                                    force=bool(body.get("force")))
                 return self._json({"ok": True, "message": msg})
+            if route == "/api/discover":
+                # The browser sends ids only. Service dicts come from the
+                # server-side scan cache, so a crafted request cannot inject
+                # an arbitrary health path, canary URL or command.
+                cached = getattr(self.server, "fk_discovery", None) or {}
+                candidates = cached.get("candidates") or []
+                if body.get("rescan") or not candidates:
+                    res = discover.scan(
+                        exclude_ports={self.server.server_port})
+                    self.server.fk_discovery = res
+                    candidates = res["candidates"]
+                ids = body.get("ids")
+                if ids is not None and not isinstance(ids, list):
+                    return self._json({"error": "ids 必须是数组"}, 400)
+                if ids is not None and len(ids) > 100:
+                    return self._json({"error": "一次最多加入 100 个服务"}, 400)
+                out = discover.apply_config(
+                    self.cfg_path, candidates, ids=ids,
+                    auto=bool(body.get("auto")))
+                out["candidates"] = candidates
+                return self._json(out)
             if route == "/api/stop":
                 # shutdown() must not be called from the serving thread itself.
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -686,6 +799,9 @@ def make_server(config_path, port=0):
     server.daemon_threads = True
     server.fk_config = path
     server.fk_started = time.time()
+    # Last scan result. POST /api/discover resolves the browser's ids against
+    # this list instead of trusting a client-supplied service definition.
+    server.fk_discovery = {}
     return server
 
 

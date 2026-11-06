@@ -4,6 +4,7 @@
     fleetkeeper                                         open the browser console
     fleetkeeper init [--config FILE] [--preset NAME]      write a runnable config
     fleetkeeper init --list-presets                       show starting scenarios
+    fleetkeeper discover [--apply] [--json]              find local AI services
     fleetkeeper start [--port N] [--no-browser]          browser console (no typing)
     fleetkeeper status [SERVICE] [--json | --html FILE]  evidence ladder
     fleetkeeper doctor [--json | --html FILE]            fleet-wide diagnosis
@@ -21,7 +22,7 @@ import os
 import sys
 import time
 
-from . import evidence, heartbeat, history, proc, redact, safeio, template, watchdog
+from . import discover, evidence, heartbeat, history, proc, redact, safeio, template, watchdog
 from . import report as report_mod  # cmd_doctor has a local variable named `report`
 
 
@@ -298,6 +299,51 @@ def cmd_init(args):
     print("  fleetkeeper --config {} doctor --html status.html".format(args.config))
     print("  fleetkeeper --config {} sweep".format(args.config))
     print("net_probe_targets is empty = network gate off; add hosts to enable it.")
+    if getattr(args, "discover", False):
+        result = discover.scan(timeout=args.discover_timeout)
+        out = discover.apply_config(path, result["candidates"], auto=True)
+        print("autodiscovery: scanned {} ports in {} ms".format(
+            len(result["scanned_ports"]), result["elapsed_ms"]))
+        print(out["message"])
+        if not out["added"]:
+            print("nothing detected; the placeholder remains. Run "
+                  "`fleetkeeper discover --json` to see what was probed.")
+    return 0
+
+
+def cmd_discover(args):
+    """Read-only by default; --apply appends high-confidence services."""
+    ports = None
+    if args.ports:
+        ports = [x.strip() for x in str(args.ports).split(",") if x.strip()]
+    result = discover.scan(
+        ports=ports, timeout=args.timeout,
+        max_ports=args.max_ports)
+    applied = None
+    if args.apply:
+        applied = discover.apply_config(args.config, result["candidates"],
+                                        auto=True)
+    if args.json:
+        # --json must stay machine-readable even with --apply: one object,
+        # not two concatenated JSON documents on stdout.
+        payload = dict(result)
+        if applied is not None:
+            payload["apply"] = applied
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    else:
+        print("scanned {} ports in {} ms (source: {}); {} answered HTTP".format(
+            len(result["scanned_ports"]), result["elapsed_ms"],
+            result["source"], len(result["http_ports"])))
+        if not result["candidates"]:
+            print("no local AI service recognised. Start your service, then re-run; "
+                  "or pass --ports 11434,8080 to probe specific ports.")
+        for c in result["candidates"]:
+            print("{:<9} {:<28} :{:<6} {}".format(
+                c["confidence"], c["name"], c["port"], c["evidence"]))
+        print("--apply will add only the 'high' confidence rows.")
+    if applied is not None:
+        print(applied["message"])
     return 0
 
 
@@ -377,7 +423,26 @@ def build_parser():
                      help="show what each scenario contains and exit")
     ini.add_argument("--force", action="store_true",
                      help="overwrite an existing config file")
+    ini.add_argument("--discover", action="store_true",
+                     help="scan localhost and add recognised AI services")
+    ini.add_argument("--discover-timeout", type=float,
+                     default=discover.DEFAULT_TIMEOUT,
+                     help="per-probe timeout for --discover (default: 0.6s)")
     ini.set_defaults(func=cmd_init)
+
+    disc = sub.add_parser("discover", parents=[child],
+                          help="find local AI services by probing loopback ports")
+    disc.add_argument("--apply", action="store_true",
+                      help="append high-confidence services to the config")
+    disc.add_argument("--json", action="store_true",
+                      help="one machine-readable JSON object on stdout")
+    disc.add_argument("--ports", default=None,
+                      help="comma-separated ports to probe instead of scanning")
+    disc.add_argument("--max-ports", type=int, default=discover.MAX_PORTS,
+                      help="cap the number of ports scanned (default: 60)")
+    disc.add_argument("--timeout", type=float, default=discover.DEFAULT_TIMEOUT,
+                      help="per-probe timeout in seconds (default: 0.6)")
+    disc.set_defaults(func=cmd_discover)
 
     s = sub.add_parser("status", parents=[child], help="evidence ladder per service")
     s.add_argument("service", nargs="?")

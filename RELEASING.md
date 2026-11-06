@@ -149,6 +149,37 @@ If `publish-pypi` fails but `build` and `create-release` succeeded, fix the
 PyPI trusted-publisher configuration and re-run the workflow from the Actions
 tab; do not re-tag.
 
+## Building the Windows exe (Release asset)
+
+`fleetkeeper.spec` is checked in (`.gitignore` explicitly un-ignores it) and
+lists every module the frozen build needs, including `fleetkeeper.discover`.
+Both entry points use the same spec, so there is one build definition:
+
+```bat
+REM from the repository root, on Windows with Python + PyInstaller
+scripts\build_exe.bat
+```
+
+or directly:
+
+```bat
+python -m pip install pyinstaller
+python -m PyInstaller --clean --noconfirm fleetkeeper.spec
+```
+
+The output is `dist\fleetkeeper.exe` (about 9 MB, one file, console window).
+Before attaching it to the draft release, run the clean-directory journey:
+
+```
+python scripts\e2e_exe_console.py
+```
+
+That script launches the exe with Python removed from `PATH`, checks the
+generated config, the Chinese page, `/api/ping`, `/api/state`, `/report`, the
+read-only discovery scan, `/api/stop` and the refused connection an orphaned
+tab then receives. `dist/` is ignored by git; the exe is distributed only as
+a Release asset, never committed.
+
 ## Known build warning
 
 `python -m build` prints `project.license as a TOML table is deprecated`.

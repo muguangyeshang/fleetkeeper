@@ -81,6 +81,8 @@ def main():
         code, page = get(base, "/")
         check("GET / is 200", code == 200, code)
         check("page has the reconnect button", 'id="btn-reconnect"' in page)
+        check("page has the autodiscovery controls",
+              'id="btn-discover"' in page and 'id="discover-list"' in page)
         check("page has the Chinese recovery text",
               "重新双击 fleetkeeper.exe" in page)
         check("page never prints the raw TypeError",
@@ -98,6 +100,19 @@ def main():
 
         code, report = get(base, "/report")
         check("GET /report is 200", code == 200, code)
+
+        before = open(cfg, encoding="utf-8").read()
+        started = time.time()
+        code, disc = get(base, "/api/discover")
+        elapsed = time.time() - started
+        check("GET /api/discover is 200", code == 200, code)
+        payload = json.loads(disc)
+        check("discovery scan is bounded",
+              "candidates" in payload and
+              len(payload.get("scanned_ports", [])) <= 60 and elapsed < 15,
+              (len(payload.get("scanned_ports", [])), round(elapsed, 2)))
+        check("discovery GET rewrites nothing",
+              open(cfg, encoding="utf-8").read() == before)
 
         try:
             post(base, "/api/stop", {})
