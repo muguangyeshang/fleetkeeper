@@ -117,6 +117,8 @@ main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
 .meta b{color:var(--ink);font-weight:600}
 .issues{margin-top:9px;background:var(--bad-bg);border-radius:7px;padding:7px 9px;
  font-size:11.5px;color:var(--bad);word-break:break-word;line-height:1.5}
+.note{margin-top:6px;background:#f4f6fa;border-radius:7px;padding:5px 9px;
+ font-size:11px;color:#5a6478;word-break:break-word;line-height:1.5}
 .evid{margin-top:8px;font-size:11px;color:var(--sub);word-break:break-word;line-height:1.45;
  background:#f7f8fb;border-left:2px solid #d8dfec;border-radius:0 6px 6px 0;padding:5px 8px;
  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -597,9 +599,14 @@ function renderServices(st){
    meta+='<div>业务探针：<b>'+esc(s.canary_path||'未配置')+'</b></div>';
    if(s.hb_age!=null)meta+='<div>心跳距今：<b>'+Math.round(s.hb_age)+' 秒</b></div>';
    if(s.has_recovery)meta+='<div>恢复动作：<b>已配置</b></div>';
-   var issues='';
+   var issues='',notes='';
    for(var j=0;j<(s.issues||[]).length&&j<3;j++){
      issues+='<div class="issues">'+esc(s.issues[j])+'</div>';
+   }
+   // Advisory only: the service passed its business probe, so this must not
+   // read like a failure. Grey, one line, below the red block.
+   for(var j=0;j<(s.notes||[]).length&&j<2;j++){
+     notes+='<div class="note">'+esc(s.notes[j])+'</div>';
    }
    var evid='';
    if((s.evidence||[]).length){var evall=s.evidence.join(' · ');
@@ -611,7 +618,7 @@ function renderServices(st){
      '<span class="chip info">'+esc(s.level)+'</span>'+
      (s.paused?' <span class="chip gray">已暂停</span>':'')+'</div></div></div>'+
      '<div class="ladder">'+ladder+'</div><div class="meta">'+meta+'</div>'+
-     evid+issues+
+     evid+issues+notes+
      '<div class="card-actions">'+
        '<button class="mini" data-act="check" data-key="'+esc(s.key)+'">体检这一个</button>'+
        '<button class="mini" data-act="heartbeat" data-key="'+esc(s.key)+'">写入心跳</button>'+

@@ -3,6 +3,8 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+
 import fleetkeeper.evidence as E
 
 
@@ -108,5 +110,71 @@ def test_canary_expectations():
         bad = E.check_canary({"type": "http", "port": port, "path": "/",
                               "expect": {"status": 200, "json_path": "items", "min_items": 5}})
         assert bad["passed"] is False
+    finally:
+        srv.shutdown()
+
+
+class _Gateway(BaseHTTPRequestHandler):
+    """Behaves like a real OpenAI-compatible gateway: "/" is 404, the model
+    list is served. `broken` makes the canary fail too."""
+
+    broken = False
+
+    def do_GET(self):
+        if self.path.startswith("/v1/models") and not self.broken:
+            body = json.dumps({"data": [{"id": "m1"}]}).encode()
+            code = 200
+        else:
+            body = b'{"detail": "Not Found"}'
+            code = 404
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+def _gateway(broken=False):
+    _Gateway.broken = broken
+    srv = _serve(_Gateway)
+    return srv, srv.server_address[1]
+
+
+def _gw_service(port):
+    return {
+        "name": "gw", "port": port,
+        "health": {"path": "/"},
+        "canary": {"type": "http", "path": "/v1/models",
+                   "expect": {"status": 200, "json_path": "data", "min_items": 1}},
+    }
+
+
+def test_404_on_root_is_a_note_when_the_business_probe_passed():
+    """Real console symptom: eleven healthy L4 cards each carried a red
+    'service returns 404' bar, because the health path was "/" on gateways
+    that only answer on /v1/models. The ladder said healthy, the card said
+    broken. A 4xx the canary has already disproven is advice, not a fault."""
+    srv, port = _gateway()
+    try:
+        r = E.evaluate_service(_gw_service(port))
+        if r["level"] < 4:        # no psutil and no netstat PID on this box
+            pytest.skip("ladder stopped below L4 on this host")
+        assert not [i for i in r["issues"] if "404" in i], r["issues"]
+        assert any("404" in n for n in r["notes"]), r["notes"]
+    finally:
+        srv.shutdown()
+
+
+def test_404_on_root_stays_an_issue_when_the_canary_also_fails():
+    """Same 404, but nothing else proves the service works -- that is a real
+    'auth required or path mismatch' and must stay red."""
+    srv, port = _gateway(broken=True)
+    try:
+        r = E.evaluate_service(_gw_service(port))
+        assert [i for i in r["issues"] if "404" in i], r["issues"]
+        assert not r["notes"] or all("不影响判定" not in n for n in r["notes"])
     finally:
         srv.shutdown()

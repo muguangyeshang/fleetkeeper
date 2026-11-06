@@ -122,6 +122,9 @@ def _one_row(key, svc, cfg, path, hb_dir):
         "hb_age": hb.get("age_seconds"),
         "evidence": ev.get("evidence", []),
         "issues": [redact.redact(str(i)) for i in ev.get("issues", [])],
+        # Notes are advisory (a 4xx health path that the business probe has
+        # already disproven). They render grey, not red.
+        "notes": [redact.redact(str(i)) for i in ev.get("notes", [])],
         "health_path": health.get("path", "/"),
         "canary_path": canary.get("path"),
         "canary_type": canary.get("type"),
@@ -184,6 +187,7 @@ def evaluate_rows(cfg, path, max_workers=MAX_WORKERS):
                     "level_number": 0, "pids": [], "heartbeat": "ERROR",
                     "hb_age": None, "evidence": [],
                     "issues": [redact.redact(str(exc))[:160]],
+                    "notes": [],
                     "health_path": "/", "canary_path": None,
                     "canary_type": None, "heartbeat_period": 60,
                     "has_recovery": False, "logs": [], "paused": False,

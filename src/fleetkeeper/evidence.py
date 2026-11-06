@@ -155,7 +155,7 @@ def evaluate_service(svc):
     name = svc.get("name") or svc.get("key")
     port = svc.get("port")
     out = {"name": name, "port": port, "level": 0, "level_name": LEVEL_NAME[0],
-           "evidence": [], "issues": []}
+           "evidence": [], "issues": [], "notes": []}
 
     if port is None:
         out["issues"].append("registry entry declares no port")
@@ -199,8 +199,12 @@ def evaluate_service(svc):
     out["evidence"].append("HTTP {} {}".format(hp["status"], hp["reason"] or ""))
     if hp["status"] >= 500:
         out["issues"].append("service returns 5xx; business layer unavailable")
-    elif hp["status"] >= 400:
-        out["issues"].append("service returns {}; auth required or path mismatch".format(hp["status"]))
+    # A 4xx from the health path is not proof of a broken service. Most
+    # OpenAI-compatible gateways answer 404 or 401 on "/" while serving
+    # /v1/models perfectly; the ladder already reached L3 on that status.
+    # Whether it matters depends on the business probe, so the verdict is
+    # deferred to the canary below instead of colouring the card red here.
+    health_4xx = 400 <= hp["status"] < 500
 
     if canary_is_protocol_only(svc):
         canary = {"configured": True, "passed": None, "proof": "protocol_only",
@@ -211,8 +215,16 @@ def evaluate_service(svc):
     if canary.get("passed") is True:
         out["level"] = 4
         out["evidence"].append("business canary passed: {}".format(canary["detail"]))
-    elif canary.get("configured") and canary.get("passed") is False:
-        out["issues"].append("business canary failed: {}".format(canary["detail"]))
+        if health_4xx:
+            out["notes"].append(
+                "健康路径 {} 返回 {}，业务探测已通过，不影响判定".format(
+                    health.get("path", "/"), hp["status"]))
+    else:
+        if canary.get("configured") and canary.get("passed") is False:
+            out["issues"].append("business canary failed: {}".format(canary["detail"]))
+        if health_4xx:
+            out["issues"].append(
+                "service returns {}; auth required or path mismatch".format(hp["status"]))
 
     out["level_name"] = LEVEL_NAME[out["level"]]
     return out

@@ -16,6 +16,15 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
   unauthenticated control plane.
 
 ### Bug Fixes
+- Every card could say "正常 L4" and still carry a red `service returns 404;
+  auth required or path mismatch` bar. The health path for an OpenAI-compatible
+  gateway defaults to `/`, which those gateways answer with 404 or 401 while
+  serving `/v1/models` perfectly; the business probe had already proved the
+  service works, so the red bar was contradicting the status right above it.
+  A 4xx on the health path is now deferred until the canary has run: if the
+  canary passed it becomes a grey note (`健康路径 / 返回 404，业务探测已通过，
+  不影响判定`), and it stays a red issue only when nothing else proves the
+  service works. Six of the eleven local cards were affected.
 - Without `psutil`, the Windows fallback could not read a command line and
   answered with the string `"<psutil missing; command line unreadable>"`.
   `proc.verify_pid()` compares that string against the expected substring, so
