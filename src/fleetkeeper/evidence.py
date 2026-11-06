@@ -189,6 +189,19 @@ def evaluate_service(svc):
     out["evidence"].append("TCP connect OK")
 
     health = svc.get("health") or {}
+    if str(health.get("type") or "http").lower() == "tcp":
+        # A non-HTTP service (MySQL, Redis, Nginx...): an HTTP GET proves
+        # nothing and a 404 would brand it broken. For these, the TCP
+        # connect IS the protocol layer -- the service answered in its own
+        # protocol as far as a generic probe can tell. Ladder stops at L3;
+        # there is no generic business canary for arbitrary protocols.
+        if tcp_probe(port, timeout=float(health.get("timeout") or 3)):
+            out["level"] = 3
+            out["level_name"] = LEVEL_NAME[3]
+            out["evidence"].append("非 HTTP 服务，TCP 握手成功")
+        else:
+            out["issues"].append("TCP 握手失败：服务可能刚退出或端口被别的程序占了")
+        return out
     hp = http_probe(port, health.get("path", "/"),
                     method=health.get("method", "GET"),
                     timeout=health.get("timeout", 5))

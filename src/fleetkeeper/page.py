@@ -268,7 +268,7 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
 
       <details>
         <summary>这是什么 / 我该干什么</summary>
-        <p>1. 页面打开时会自动扫描本机端口，识别到 Ollama、OpenAI 兼容接口、ComfyUI 这类服务会直接写进配置；没认出来的可以勾上手动加入，或者自己填名字和端口。</p>
+        <p>1. 页面打开时会自动扫描本机端口，AI 服务（Ollama、OpenAI 兼容接口、ComfyUI…）会直接写进配置，MySQL、Redis、Nginx 这类非 HTTP 服务也认得出来；没认出来的可以勾上手动加入，或者自己填名字和端口。</p>
         <p>2. 每张卡片上的五级阶梯是「配置 → 进程 → 端口 → 协议 → 业务」，越靠右越能证明服务真的在干活。红色表示没找到进程或端口不通，先去检查服务本身。</p>
         <p>3. 「跑一次守护」做一次检查：真挂了就按配置拉起来，断网时不会乱拉，出事发通知。「开启常驻守护」让面板自己按间隔重复检查，不用另开命令行。</p>
         <p>4. 卡片上的「编辑」可以改健康检查路径、业务探针路径、心跳周期和日志文件；「写入心跳」给无法自己上报的服务补一条证据；「暂停」让守护跳过它但不删配置。</p>
@@ -402,7 +402,7 @@ var presetData=[],isPlaceholder=true,lastState=null;
 var pollTimer=null,stopped=false,inFlight=false,pendingRefresh=false;
 var failures=0,MAX_FAILURES=3;
 var discoveryDone=false,discoveryBusy=false,discoveryData=[];
-var editKey=null,watchRunning=false,stateError=false;
+var editKey=null,editIsTcp=false,watchRunning=false,stateError=false;
 function el(id){return document.getElementById(id);}
 function setConn(text,cls){
  var c=el('conn');c.textContent=text;c.className=cls||'';
@@ -665,7 +665,9 @@ function serviceAction(act,key){
    el('edit-sub').textContent='配置键 '+key+' · 端口 '+row.port;
    el('edit-name').value=row.name||'';
    el('edit-port').value=row.port||'';
-   el('edit-health').value=row.health_path||'/';
+   editIsTcp=row.health_path==='TCP';
+   el('edit-health').value=editIsTcp?'':(row.health_path||'/');
+   el('edit-health').placeholder=editIsTcp?'非 HTTP 服务，无路径':'/';
    el('edit-canary').value=row.canary_path||'';
    el('edit-period').value=row.heartbeat_period||60;
    el('edit-log').value='';
@@ -883,10 +885,10 @@ el('btn-edit-save').onclick=function(){
  if(!editKey){el('editor').style.display='none';return;}
  var patch={
    name:el('edit-name').value.trim(),port:parseInt(el('edit-port').value,10),
-   health_path:el('edit-health').value.trim(),
    canary_path:el('edit-canary').value.trim(),
    heartbeat_period:parseInt(el('edit-period').value,10)
  };
+ if(!editIsTcp)patch.health_path=el('edit-health').value.trim();
  if(el('edit-log').value.trim())patch.log_file=el('edit-log').value.trim();
  say('正在保存修改…');
  post('/api/service/update',{key:editKey,patch:patch}).then(function(r){

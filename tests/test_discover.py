@@ -440,3 +440,82 @@ def test_ui_discover_post_passes_the_configured_ports(
     want = [s["port"] for s in
             json.load(open(cfg, encoding="utf-8"))["registry"]["services"].values()]
     assert seen and seen[-1]["existing_ports"] == want and want
+
+
+# --- non-HTTP (TCP) services ------------------------------------------------
+
+def _tcp_listener():
+    """A real TCP listener that ACCEPTS: with backlog=1 and nobody accepting,
+    the first probe fills the queue and every later connect times out."""
+    import socket
+    import threading
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(4)
+
+    def drain():
+        try:
+            while True:
+                conn, _ = s.accept()
+                conn.close()
+        except OSError:
+            pass
+
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
+    return s, s.getsockname()[1]
+
+
+def test_scan_offers_a_known_tcp_service(services, monkeypatch):
+    """mysqld listening on a non-HTTP port must show up in the discovery list
+    even though it never answers an HTTP probe -- the fleet watches all
+    services, not only the AI ones."""
+    sock, port = _tcp_listener()
+    try:
+        monkeypatch.setattr(discover, "_process_table",
+                            lambda: {4242: {"name": "mysqld.exe",
+                                            "cmdline": "mysqld.exe"}})
+        res = discover.scan(ports=[port], listener_map={port: {4242}})
+        cand = next(c for c in res["candidates"] if c["port"] == port)
+        assert cand["kind"] == "tcp" and cand["name"] == "MySQL"
+        assert cand["health_path"] is None and cand["confidence"] == "medium"
+        assert not cand["recommended"]      # user confirms, never auto-added
+    finally:
+        sock.close()
+
+
+def test_scan_skips_an_unknown_tcp_listener(services):
+    """A port nobody can name (no recognisable process image) is noise, not
+    a service: it must not appear in the list."""
+    sock, port = _tcp_listener()
+    try:
+        res = discover.scan(ports=[port], listener_map={port: {9999}})
+        assert not [c for c in res["candidates"] if c["port"] == port]
+    finally:
+        sock.close()
+
+
+def test_apply_config_writes_a_tcp_health_check(services, tmp_path, monkeypatch):
+    sock, port = _tcp_listener()
+    try:
+        cfg = tmp_path / "fleet.json"
+        safeio.atomic_write_text(str(cfg),
+                                 template.render(template.default_config()))
+        cand = {"id": "tcp-{}".format(port), "kind": "tcp", "name": "MySQL",
+                "port": port, "confidence": "medium", "recommended": False,
+                "health_path": None, "canary": None}
+        out = discover.apply_config(str(cfg), [cand], ids=["tcp-{}".format(port)])
+        assert out["added"]
+        svc = json.load(open(cfg, encoding="utf-8"))["registry"]["services"]
+        entry = next(v for v in svc.values() if v["port"] == port)
+        assert entry["health"]["type"] == "tcp"
+        assert entry["health"].get("path") is None
+    finally:
+        sock.close()
+
+
+def test_validate_still_rejects_a_tcp_canary_with_bad_shape():
+    with pytest.raises(ValueError):
+        discover._validate({"id": "tcp-1", "kind": "tcp", "port": 1,
+                            "health_path": None,
+                            "canary": {"type": "gopher", "path": "/"}})

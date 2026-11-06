@@ -5,6 +5,15 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 
 ## Unreleased
 
+### Improvements
+- Discovery is no longer AI-only. A third scan phase classifies well-known
+  non-HTTP services (MySQL, Redis, PostgreSQL, MongoDB, Nginx, MinIO, SSH...)
+  by process image plus a real TCP connect, including ports Docker Desktop
+  proxies (com.docker.backend + 3306/5432/6379/27017). They enter the fleet
+  with `health: {"type": "tcp"}`; for these the TCP handshake IS the protocol
+  layer, so the ladder reaches L3 and no 404 can brand them broken. New rows
+  are never auto-applied -- the user still ticks them.
+
 ### Security
 - The console now checks who is calling, not just which interface it listens
   on. A loopback bind does not stop a web page: any site the user visits can

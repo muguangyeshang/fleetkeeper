@@ -178,3 +178,40 @@ def test_404_on_root_stays_an_issue_when_the_canary_also_fails():
         assert not r["notes"] or all("不影响判定" not in n for n in r["notes"])
     finally:
         srv.shutdown()
+
+
+def test_tcp_type_health_reaches_l3_on_a_real_listener():
+    """A MySQL/Redis-style service: health {"type": "tcp"} -- the TCP connect
+    is the protocol layer. No HTTP probe runs, so no 404 can brand it broken;
+    the ladder honestly stops at L3 (no generic business canary exists)."""
+    import socket
+    import threading
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(4)
+
+    def _drain():
+        try:
+            while True:
+                conn, _ = s.accept()
+                conn.close()
+        except OSError:
+            pass
+
+    threading.Thread(target=_drain, daemon=True).start()
+    port = s.getsockname()[1]
+    try:
+        r = E.evaluate_service({"name": "db", "port": port,
+                                "health": {"type": "tcp", "timeout": 2}})
+        assert r["level"] >= 2, r
+        if r["level"] == 3:
+            assert any("TCP 握手成功" in e for e in r["evidence"])
+            assert not [i for i in r["issues"] if "404" in i or "HTTP" in i]
+    finally:
+        s.close()
+
+
+def test_tcp_type_health_reports_a_dead_port():
+    r = E.evaluate_service({"name": "db", "port": 1,
+                            "health": {"type": "tcp", "timeout": 1}})
+    assert r["level"] <= 1

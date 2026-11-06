@@ -120,7 +120,7 @@ SIGNATURES = (
     },
 )
 
-ALLOWED_KINDS = frozenset(s["kind"] for s in SIGNATURES)
+ALLOWED_KINDS = frozenset(s["kind"] for s in SIGNATURES) | {"tcp"}
 
 # Process image names / command lines are used only for classification. The
 # raw command line may contain user paths, so it never leaves this module.
@@ -138,6 +138,35 @@ PROCESS_HINTS = (
     (re.compile(r"localai|litellm|gpt4all", re.I),
      "openai-compatible", "本地 AI 网关"),
 )
+
+# Not every local service speaks HTTP. These process images mark well-known
+# TCP services; the fleet watches them too (process + port + connect), they
+# just get a TCP health check instead of an HTTP one.
+TCP_HINTS = (
+    (re.compile(r"mysqld", re.I), "MySQL"),
+    (re.compile(r"redis", re.I), "Redis"),
+    (re.compile(r"postgres", re.I), "PostgreSQL"),
+    (re.compile(r"mongod", re.I), "MongoDB"),
+    (re.compile(r"nginx", re.I), "Nginx"),
+    (re.compile(r"httpd|apache2?", re.I), "Apache"),
+    (re.compile(r"caddy", re.I), "Caddy"),
+    (re.compile(r"minio", re.I), "MinIO"),
+    (re.compile(r"rabbitmq|beam\.smp", re.I), "RabbitMQ"),
+    (re.compile(r"elasticsearch", re.I), "Elasticsearch"),
+    (re.compile(r"etcd", re.I), "etcd"),
+    (re.compile(r"sshd", re.I), "SSH"),
+    (re.compile(r"^frps?c?(?:\.exe)?$", re.I), "frp"),
+    (re.compile(r"memcached", re.I), "Memcached"),
+)
+
+# Docker Desktop proxies every container port through com.docker.backend.exe,
+# so a MySQL container shows up as "com.docker.backend" -- the image name
+# alone says nothing. The container port is the tell: only for the docker
+# backend process, only on these well-known service ports.
+DOCKER_PROXY_PORTS = {
+    3306: "MySQL", 5432: "PostgreSQL", 6379: "Redis", 27017: "MongoDB",
+    1433: "SQL Server", 1521: "Oracle", 11211: "Memcached", 9092: "Kafka",
+}
 
 # Phase 1 probes "/" once per port. Phase 2 probes only the three
 # product-specific JSON endpoints; HTML fingerprints reuse the phase-1 body,
@@ -357,6 +386,33 @@ def _candidate(port, results, hint):
     return None
 
 
+def _tcp_candidate(port, hint, timeout):
+    """A known non-HTTP service: process image matches TCP_HINTS and a TCP
+    connect succeeds. health_path is None on purpose -- apply_config() turns
+    that into {"type": "tcp"} and the ladder stops at L3 for these."""
+    label = None
+    for pattern, lbl in TCP_HINTS:
+        if pattern.search(str(hint.get("process") or "")):
+            label = lbl
+            break
+    if not label and "docker" in str(hint.get("process") or "").lower():
+        label = DOCKER_PROXY_PORTS.get(int(port))
+    if not label:
+        return None
+    if not evidence.tcp_probe(port, timeout=timeout):
+        return None
+    return {
+        "id": "tcp-{}".format(port),
+        "kind": "tcp", "name": label, "port": int(port),
+        "pid": hint.get("pid"), "process": hint.get("process"),
+        "confidence": "medium",
+        "evidence": redact.redact("进程 {} 是 {}（非 HTTP 服务），TCP 握手成功".format(
+            hint.get("process") or "?", label))[:180],
+        "health_path": None, "canary": None, "status": None,
+        "recommended": False,
+    }
+
+
 def _ordered_ports(listener_map, exclude_ports, max_ports, explicit_ports):
     """Known AI ports first, then ascending. Returns (ports, source)."""
     if explicit_ports:
@@ -439,6 +495,34 @@ def scan(ports=None, exclude_ports=None, max_ports=MAX_PORTS,
         item = _candidate(port, port_results[port], hint)
         if item:
             candidates.append(item)
+
+    # Phase 3: non-HTTP services. Ports that answered no HTTP probe at all,
+    # INCLUDING the well-known ports the HTTP phase skips (3306/6379/...):
+    # a recognised process image plus a successful TCP connect is enough to
+    # offer them. Random unknown listeners stay out -- a port nobody can name
+    # is noise, not a service.
+    http_seen = set(http_ports)   # ports that DID answer HTTP: not tcp candidates
+    taken = {c["port"] for c in candidates}
+    tcp_ports = []
+    for port in listener_map:
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            continue
+        if port in http_seen or port in taken or port in (exclude_ports or ()):
+            continue
+        hint = _process_hint(port, listener_map, table)
+        proc_name = str(hint.get("process") or "").lower()
+        if any(pat.search(proc_name) for pat, _ in TCP_HINTS):
+            tcp_ports.append(port)
+        elif "docker" in proc_name and int(port) in DOCKER_PROXY_PORTS:
+            tcp_ports.append(port)   # container port proxied by Docker Desktop
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        tcp_items = list(pool.map(
+            lambda p: _tcp_candidate(p, _process_hint(p, listener_map, table),
+                                     timeout), tcp_ports))
+    candidates.extend(c for c in tcp_items if c)
+
     # Stable order: confident, known products first; unknown HTTP last.
     weight = {"high": 0, "medium": 1, "low": 2}
     candidates.sort(key=lambda c: (weight.get(c["confidence"], 3), c["port"]))
@@ -495,7 +579,9 @@ def _validate(candidate):
     if not 1 <= port <= 65535:
         raise ValueError("识别结果端口不合法")
     hp = candidate.get("health_path") or "/"
-    if not isinstance(hp, str) or not hp.startswith("/") or len(hp) > 256:
+    if candidate.get("kind") == "tcp":
+        hp = None    # non-HTTP service: the health check is a TCP connect
+    elif not isinstance(hp, str) or not hp.startswith("/") or len(hp) > 256:
         raise ValueError("识别结果健康检查路径不合法")
     canary = candidate.get("canary")
     if canary is not None:
@@ -555,10 +641,14 @@ def apply_config(path, candidates, ids=None, auto=False):
         while key in svcs:
             key = "auto{}_{}".format(port, n)
             n += 1
+        if hp is None:      # tcp service: connect is the health check
+            health = {"type": "tcp", "timeout": 3}
+        else:
+            health = {"path": hp, "method": "GET", "timeout": 3}
         svcs[key] = {
             "name": str(c.get("name") or c.get("kind"))[:64],
             "port": port,
-            "health": {"path": hp, "method": "GET", "timeout": 3},
+            "health": health,
             "canary": copy.deepcopy(canary),
             "recovery": None,
         }

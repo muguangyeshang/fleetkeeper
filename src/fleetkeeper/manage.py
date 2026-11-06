@@ -125,7 +125,8 @@ def _one_row(key, svc, cfg, path, hb_dir):
         # Notes are advisory (a 4xx health path that the business probe has
         # already disproven). They render grey, not red.
         "notes": [redact.redact(str(i)) for i in ev.get("notes", [])],
-        "health_path": health.get("path", "/"),
+        "health_path": ("TCP" if str(health.get("type") or "").lower() == "tcp"
+                        else health.get("path", "/")),
         "canary_path": canary.get("path"),
         "canary_type": canary.get("type"),
         "heartbeat_period": period,
