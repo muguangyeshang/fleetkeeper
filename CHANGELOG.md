@@ -6,6 +6,12 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- First run tells its story once, permanently. The auto-discovery used to
+  report via a toast that vanished on the first refresh; a fresh config now
+  also shows a dismissible banner above the KPIs: "已自动识别本机服务：
+  扫描到 N 个，加入了 M 个", plus the suggested next step (开启挂了自动
+  重启和常驻守护). Two frontend checks lock the banner and its 知道了
+  button.
 - The user story is closed end to end: 双击打开 -> 自动识别 -> 挂了自己修 ->
   自己叫人 -> 开机不用管.
   - One-click restart. Discovery captures the command line each service was

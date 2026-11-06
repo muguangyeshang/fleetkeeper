@@ -53,6 +53,11 @@ button.danger{color:var(--bad)}
 button.mini{font-size:11.5px;padding:4px 9px;border-radius:6px}
 label{font-size:12.5px;color:var(--sub);display:inline-flex;align-items:center;gap:6px}
 main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
+.welcome{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:12px 16px;
+ background:linear-gradient(90deg,var(--brand-bg),#fff);border:1px solid var(--brand);
+ border-radius:12px;font-size:13px}
+.welcome .w-main{font-weight:650;color:var(--brand)}
+.welcome .w-sub{color:var(--sub);font-size:12px;flex:1;min-width:0}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;
  padding:13px 15px;box-shadow:var(--shadow);position:relative;overflow:hidden;min-height:86px}
@@ -203,6 +208,11 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
   </div>
 </header>
 <main>
+  <div class="welcome" id="welcome" style="display:none">
+    <div class="w-main" id="welcome-text"></div>
+    <div class="w-sub" id="welcome-sub"></div>
+    <button class="mini" id="welcome-close">知道了</button>
+  </div>
   <div class="kpis" id="kpis">
     <div class="kpi"><span class="k-label">服务总数</span><span class="k-num" id="kpi-total">–</span><span class="k-foot" id="kpi-total-foot">正在读取…</span></div>
     <div class="kpi ok"><span class="k-label">协议以上正常</span><span class="k-num" id="kpi-healthy">–</span><span class="k-foot">端口与 HTTP 都通</span></div>
@@ -558,11 +568,22 @@ function runDiscovery(auto){
  var call=auto?post('/api/discover',{auto:true}):api('/api/discover');
  return call.then(function(res){
   discoveryBusy=false;discoveryDone=true;renderDiscovery(res);
-  if(auto&&res.auto_applied){
-   // Discovery runs in parallel with state(). If state() already reported a
-   // dead exe or a broken config, do not overwrite that better message.
-   if(!stateError)say('已自动识别并加入 '+res.auto_applied+' 个服务，不用再手填端口。');
-   return refresh().then(function(){return true;});
+  if(auto){
+   // First open of a fresh config: a permanent banner, not just a toast --
+   // the toast is gone after one refresh, the banner tells the story until
+   // the user closes it.
+   var w=el('welcome');
+   if(w&&res.candidates&&res.candidates.length){
+    el('welcome-text').textContent='已自动识别本机服务：扫描到 '+res.candidates.length+
+      ' 个，加入了 '+res.auto_applied+' 个。';
+    el('welcome-sub').textContent='其余的在右边「自动识别」里等你勾选；认错的服务随时可以删。'+
+      '下一步建议：给重要的服务开「挂了自动重启」和「常驻守护」。';
+    w.style.display='flex';
+    el('welcome-close').onclick=function(){w.style.display='none';};
+   }
+   if(auto&&res.auto_applied&&!stateError)say('已自动识别并加入 '+res.auto_applied+' 个服务，不用再手填端口。');
+   if(res.auto_applied)return refresh().then(function(){return true;});
+   return true;
   }
   return true;
  }).catch(function(e){

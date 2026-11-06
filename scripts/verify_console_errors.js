@@ -212,6 +212,16 @@ function check(label, cond, detail) {
   check('first load -> auto-apply message',
     first.env.nodes.msg.textContent.indexOf('已自动识别并加入 1 个服务') !== -1,
     first.env.nodes.msg.textContent);
+  check('first load -> welcome banner shown with counts',
+    first.env.nodes['welcome'].style.display === 'flex' &&
+    first.env.nodes['welcome-text'].textContent.indexOf('扫描到 1 个') !== -1 &&
+    first.env.nodes['welcome-text'].textContent.indexOf('加入了 1 个') !== -1 &&
+    first.env.nodes['welcome-sub'].textContent.indexOf('挂了自动重启') !== -1,
+    first.env.nodes['welcome-text'].textContent);
+  // The banner is dismissible: clicking 知道了 hides it for this visit.
+  first.env.nodes['welcome-close'].onclick();
+  check('welcome banner -> dismissible',
+    first.env.nodes['welcome'].style.display === 'none');
   first.env.nodes['btn-discover-add'].onclick();
   await new Promise((r) => setTimeout(r, 40));
   check('manual add -> selected ids are posted',
