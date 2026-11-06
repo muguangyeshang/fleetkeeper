@@ -193,8 +193,10 @@ removed by 2027-02-18. Migrate in the same release that raises
 
 `MANIFEST.in` keeps LICENSE, the five root governance docs (CONTRIBUTING,
 SECURITY, RELEASING, CHANGELOG, README), `docs/*.md` plus the sample HTML,
-`config/*.json`, `scripts/`, `start.bat` and the tests in the sdist —
-setuptools' defaults would otherwise ship only the package and README.
+`config/*.json`, `scripts/`, `start.bat`, `fleetkeeper.spec` and the tests in
+the sdist — setuptools' defaults would otherwise ship only the package and
+README. The spec is included so the Windows exe can be rebuilt from an sdist
+tarball without cloning the repository.
 
 ## Rollback
 
