@@ -86,7 +86,7 @@ monitoring platform; a sensible deployment lets Gatus detect and notify while
 fleetkeeper owns the gated restart. If you already run a Gatus instance and
 want the "act on it" half, you are exactly the intended reader.
 
-## What it looks like
+## What doctor prints
 
 A real two-service run: one live local HTTP endpoint with a business canary,
 one port with no listener. This is copied from a terminal, not drafted.
@@ -264,8 +264,8 @@ uptime pingers) do not cover:
 5. **Killing the wrong process.** Ten services run under the same
    `pythonw.exe`. Killing by image name is indiscriminate slaughter.
 
-fleetkeeper is the distilled counter-measures — each one earned in a
-production homelab running 40+ guarded services:
+fleetkeeper implements one counter-measure per failure mode, each a
+testable rule rather than a promise:
 
 | Mechanism | Module | The rule it enforces |
 |---|---|---|
