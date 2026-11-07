@@ -124,7 +124,7 @@ external references.
 | Area | What it does |
 |---|---|
 | KPI strip | total / protocol-healthy / needs-attention / down / business-evidence / cumulative events, plus paused and fresh-heartbeat counts |
-| Toolbar | one-shot check, one-shot sweep, **resident watchdog** with a configurable 5-3600 s interval, full report, notification test, config export, auto-refresh toggle, stop |
+| Toolbar | one-shot check, one-shot sweep, **resident watchdog** with a configurable 5-3600 s interval, full report, notification test, 通知设置 (webhook, validated), config export, 开机自启 (opt-in logon task), auto-refresh toggle, stop |
 | Service cards | L0-L4 ladder rendered as five steps, PID, heartbeat status and age, health path, canary path, issues, evidence; per-card re-check, heartbeat injection, edit, pause, delete |
 | Timeline | filter by window (24h / 7d / 30d / all), event kind, service and row count |
 | Alerts | last lines of the alert log, redacted |
@@ -137,9 +137,12 @@ cheap `GET /api/config` decides whether discovery is allowed to write, so the
 page never waits on a slow business canary to become useful.
 
 Every write route is explicit and validated. The browser can edit a name,
-port, health path, canary path, heartbeat period and log filename; it cannot
-set a recovery command, an alert webhook or an absolute/external URL. Pausing
-moves a service into `registry.paused`, which the watchdog already ignores.
+port, health path, canary path, heartbeat period and log filename. Two fields
+reach further and carry their own validation: the edit dialog's 挂了自动重启
+stores a one-line recovery command (one line, <= 480 chars), and 通知设置
+stores a webhook URL that must parse as http(s) -- these are the only
+execution settings the console can change. Pausing moves a service into
+`registry.paused`, which the watchdog already ignores.
 
 ## Contents
 
