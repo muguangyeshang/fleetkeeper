@@ -75,6 +75,8 @@ def test_kill_writes_an_ops_log(tmp_path, child):
 
 # --- command-line plumbing -------------------------------------------------
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="_cim_cmdlines only shells out on Windows")
 def test_cim_table_parses_tab_separated_rows(monkeypatch):
     class Result:
         stdout = "111\tpython.exe -m http.server\n222\t\nnot-a-row\n"
@@ -97,6 +99,10 @@ def test_cim_table_parses_tab_separated_rows(monkeypatch):
     assert not runs
 
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="on POSIX the fallback reads /proc, which is cheap "
+                           "by construction -- the guard targets the Windows "
+                           "PowerShell launch")
 def test_proc_info_skips_the_command_line_on_the_hot_path(child, monkeypatch):
     """The console polls every few seconds; it must not pay a PowerShell
     launch per poll for a field it never renders."""

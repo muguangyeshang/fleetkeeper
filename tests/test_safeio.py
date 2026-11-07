@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-import time
 import json
+import os
+import time
 
 import pytest
 
 import fleetkeeper.safeio as S
 
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="GitBash drive-letter paths only normalize on Windows")
 def test_normalize_gitbash_path(tmp_path):
     assert S.normalize("/d/foo/bar") == S.normalize("D:\\foo\\bar")
 
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="case folding and backslash folding are Windows rules")
 def test_normalize_case_and_slashes(tmp_path):
     a = S.normalize(str(tmp_path / "Cfg.JSON"))
     b = S.normalize(str(tmp_path / "cfg.json") + os_sep())
