@@ -33,8 +33,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
+          # setup-python cannot install 3.8/3.9 on the current ubuntu runner
+          # image (26.04), so the oldest interpreters are covered where the
+          # exe actually ships: windows.
+          - os: windows-latest
+            python-version: "3.8"
+          - os: windows-latest
+            python-version: "3.9"
           # macos-latest is arm64; CPython 3.8/3.9 are not published for it.
           - os: macos-latest
             python-version: "3.11"
