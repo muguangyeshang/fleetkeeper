@@ -27,8 +27,6 @@ fleetkeeper --config fleet.json sweep                       # cron entry: detect
 > 页面只监听 `127.0.0.1`，关掉程序窗口即停止。命令行用户敲 `fleetkeeper`
 > （不带任何参数）会打开同一个面板。
 
-The CI badge goes live after the repository is pushed to GitHub.
-
 ## 30 seconds to value
 
 ```text
@@ -235,10 +233,10 @@ fleetkeeper/
   src/fleetkeeper/           16 standard-library modules
                              (discover.py, manage.py, page.py, ui.py, ...)
   scripts/                   exe entry point, build_exe.bat, acceptance harnesses
-  tests/                     175 pytest tests in 15 files
+  tests/                     193 pytest tests in 16 files
   docs/                      user guide, Chinese manual, architecture, sample page
   start.bat                  console launcher for machines with Python
-  .github/workflows/         ci.yml (3 OS x 3.8-3.13), publish.yml, templates
+  .github/workflows/         ci.yml (ubuntu 3.10-3.13, windows 3.8-3.13, macos 3.11/3.13), publish.yml, templates
 ```
 
 ---
@@ -351,7 +349,7 @@ asks for confirmation, and the API refuses to overwrite without `force`.
 
 ## Automatic discovery
 
-Typing a name and a port was the last manual step on the first run. It is gone.
+Typing a name and a port used to be the last manual step on the first run.
 
 On the first page load with an untouched config, the console scans the
 machine's own listening TCP ports, fingerprints each one over loopback HTTP,
@@ -365,6 +363,7 @@ The same engine is `fleetkeeper discover`.
 | ComfyUI | `GET /system_stats` returns `system` | `/system_stats`, `json_path=system`, `min_items=1` |
 | Open WebUI / Gradio | root HTML markers | none (liveness only) |
 | anything else answering HTTP | a status line | none |
+| MySQL / PostgreSQL / Redis / MongoDB / Nginx / MinIO / SSH (incl. Docker Desktop proxies) | recognised process image (or a proxied container port) plus a real TCP connect | TCP handshake; the ladder stops at L3 |
 
 `high` confidence rows are auto-added on a first-run config; `medium` and
 `low` rows are listed with a checkbox instead. Health and canary paths always
@@ -376,8 +375,9 @@ real service was added.
 Scope: `127.0.0.1` only, GET only, read-only paths only, capped response
 bodies, one bulk process-table read, 60 ports / 16 workers / 0.6 s per probe.
 A desktop with 48 HTTP listeners scans in about 2 seconds. Nothing is sent
-off-host, response bodies never reach the browser, and the image names of
-unrecognised local programs are not displayed. The browser sends candidate
+off-host, response bodies never reach the browser. Rows nothing claims carry
+the process image name, because that is the most useful clue for an
+unfamiliar port. The browser sends candidate
 **ids**; the server resolves them against its own scan cache, so no health
 path, canary URL or command can be injected through the API.
 
@@ -598,14 +598,13 @@ single host, not about which one is better overall.
 | [Healthchecks](https://github.com/healthchecks/healthchecks) (~10.5k stars) | deadman-switch heartbeats only | No |
 | supervisor / systemd / NSSM | process liveness | Yes, with no business canary, no WAN gate and no per-port cooldown |
 
-The dividing line is worth stating plainly: Gatus also has a WAN gate
-(`Connectivity.Checker`), so that mechanism is not unique here. What it does
-not have is a healing action. A sensible deployment lets Gatus do detection
+Gatus also has a WAN gate (`Connectivity.Checker`), so that mechanism is
+not unique here. What it does not have is a healing action. A sensible deployment lets Gatus do detection
 and notification while fleetkeeper owns the gated restart.
 
 ## Tested
 
-175 pytest tests, including a fake live fleet over real HTTP sockets, product
+193 pytest tests, including a fake live fleet over real HTTP sockets, product
 fingerprinting against real loopback servers, a real loopback browser console
 exercised over HTTP (routing, first-run config, autodiscovery, service
 editing, per-service actions, heartbeat, log redaction, resident watch,
@@ -680,10 +679,13 @@ No. It binds to `127.0.0.1`, has no embedded URLs, and makes no outbound
 request unless you configure `notify.webhook_url`. The offline HTML page has
 zero external references.
 
-**Is it a daemon? Does it autostart?**
-No. One sweep is one short-lived process owned by your cron or Task Scheduler
-entry. The browser console lives only while its window is open. Nothing is
-written to the registry and no service or scheduled task is installed.
+**Is it a daemon?**
+One sweep is one short-lived process owned by your cron or Task Scheduler
+entry. The browser console lives only while its window is open, and closing
+it stops everything. Autostart is opt-in: the toolbar's 开机自启 button
+creates one Windows logon task (`FleetKeeperPanel`, visible in Task
+Scheduler, removable from the same button). Nothing else is written to the
+registry and no service is installed.
 
 **Where does it write data?**
 Under `runtime/` next to the config file. `state.json` is a snapshot,
@@ -704,9 +706,7 @@ PID, and say so explicitly. The exe is Windows only, Python 3.8-3.13 in CI.
 
 Cheap additions that do not require a core rewrite, all standard library:
 
-1. Concurrent per-service probes (a sequential sweep is O(n) in network
-   timeouts, the current scaling limit).
-2. Alert state machine fields: success threshold, send-on-resolved, minimum
+1. Alert state machine fields: success threshold, send-on-resolved, minimum
    reminder interval.
 3. A canary expression DSL beyond the current four `expect` keys.
 4. Read-only `/metrics` and badge routes, plus an inbound webhook adapter so
