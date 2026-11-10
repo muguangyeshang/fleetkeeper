@@ -124,7 +124,7 @@ external references.
 | Area | What it does |
 |---|---|
 | KPI strip | total / protocol-healthy / needs-attention / down / business-evidence / cumulative events / today's free quota, plus paused and fresh-heartbeat counts |
-| Free quota | today's unclaimed amount, 可领/现金/重置 counts, a filterable card wall and recent reset windows — see [Free quota](#free-quota) |
+| Free quota | today's unclaimed amount, 可领/现金/重置 counts, a filterable card wall and recent reset windows; the header links to the full board at `/quota` — see [Free quota](#free-quota) |
 | Toolbar | one-shot check, one-shot sweep, **resident watchdog** with a configurable 5-3600 s interval, full report, notification test, 通知设置 (webhook, validated), config export, 开机自启 (opt-in logon task), auto-refresh toggle, stop |
 | Service cards | L0-L4 ladder rendered as five steps, PID, heartbeat status and age, health path, canary path, issues, evidence; per-card re-check, heartbeat injection, edit, pause, delete |
 | Timeline | filter by window (24h / 7d / 30d / all), event kind, service and row count |
@@ -161,12 +161,19 @@ fleetkeeper quota --refresh       # ignore the 30 min cache
 
 The console renders it as a 免费额度 panel under 我的服务: today's unclaimed
 amount, 可领 / 现金 / 重置 counts, a filterable card wall, and the recent
-reset events. Two API surfaces, on purpose:
+reset events. Its header links to **`/quota`** — the same data as a full page
+with search, type filters, three sort orders and the reset timeline. Deciding
+*which* grant to go collect is a browsing job; keeping that off the dashboard
+means the dashboard stays about "is the fleet OK right now".
+
+Both live in one process on one port, so the panel and the board can never
+disagree about the numbers. Three API surfaces, on purpose:
 
 | Endpoint | Shape | Used by |
 |---|---|---|
 | `GET /api/state` | `quota` = summary only (numbers, no cards) | the 5 s poll |
-| `GET /api/quota` | full snapshot, 50 cards + reset events | the panel, once per 5 min |
+| `GET /api/quota` | full snapshot, 50 cards + reset events | the panel, and `/quota` |
+| `GET /quota` | the full board (HTML, no external assets) | linked from the panel |
 
 `quota.cached()` never blocks: it serves the on-disk cache and starts a
 background refresh when stale. A slow or offline upstream therefore cannot

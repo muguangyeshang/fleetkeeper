@@ -126,6 +126,9 @@ main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
  align-items:center;gap:8px;flex-wrap:wrap}
 .panel h2 .count{font-weight:400;color:var(--sub);font-size:12.5px}
 .panel h2 .right{margin-left:auto;font-weight:400;font-size:12px}
+/* 面板只放概览，筛选/搜索/时间线在 /quota 那个页面上，入口要显眼但不能抢主体 */
+.panel h2 .q-more{margin-left:10px;color:var(--brand);text-decoration:none;border:1px solid var(--line);border-radius:6px;padding:1px 7px;white-space:nowrap}
+.panel h2 .q-more:hover{border-color:var(--brand);background:rgba(77,107,254,.07)}
 .hint{color:var(--sub);font-size:11.5px;margin:8px 0 0;word-break:break-all}
 .section-sub{color:var(--sub);font-size:12px;margin:-6px 0 12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
@@ -289,7 +292,8 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
 
       <section class="panel" id="quota-panel">
         <h2>免费额度 <span class="count" id="q-count"></span>
-          <span class="right" id="q-asof">每天 08:00 换一批</span></h2>
+          <span class="right" id="q-asof">每天 08:00 换一批</span>
+          <a class="right q-more" href="/quota">完整看板 →</a></h2>
         <div class="q-hero">
           <div>
             <div class="q-main"><small>¥</small><b id="q-today">–</b><span class="q-cap">今天还能领</span></div>

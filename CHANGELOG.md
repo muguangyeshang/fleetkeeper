@@ -23,6 +23,15 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
     product never sinks the other two.
   - 11 offline tests cover the parsers, the ordering rule, the 429 fallback and
     the non-blocking cache.
+- `/quota`: the panel is a summary, the board is a page. Picking which grant to
+  go collect needs search, type filters and a sort order — forty-odd cards in a
+  half-width column made the dashboard worse without making the choice easier.
+  `src/fleetkeeper/quota_page.py` serves the full board from the same process on
+  the same port, fed by the same `/api/quota`, so the panel and the board can
+  never disagree. Type and status are separate axes (「现金里还没领的」), and the
+  reset timeline flags `partial` data when upstream rate-limits the full
+  history. 6 tests pin the route, the offline guarantee and the payload fields
+  the page reads.
 - `fleetkeeper doctor` now diagnoses the panel itself, not only the fleet:
   the config path, whether the logon autostart task exists, and whether a
   webhook would actually fire. A user who cannot open the console and a user

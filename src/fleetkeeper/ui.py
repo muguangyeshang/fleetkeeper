@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import cli as cli_mod
-from . import discover, history, manage, quota, redact, safeio, template, watchdog
+from . import discover, history, manage, quota, quota_page, redact, safeio, template, watchdog
 from . import report as report_mod
 
 MAX_BODY_BYTES = 65536
@@ -335,6 +335,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if route == "/api/quota":
                 # 只读缓存 + 触发后台刷新，绝不在这条请求上等公网
                 return self._json(quota.cached())
+            if route == "/quota":
+                # 完整看板：同一个进程、同一个端口，数据同样来自 /api/quota
+                return self._html(quota_page.QUOTA_PAGE)
             if route == "/api/overview":
                 cfg = _load(self.cfg_path)
                 rows = manage.evaluate_rows(cfg, self.cfg_path)
