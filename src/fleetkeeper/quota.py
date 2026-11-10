@@ -55,6 +55,8 @@ GONE_STATES = ("已抢完", "已下架")
 
 _lock = threading.Lock()          # 保护进程内缓存与刷新标志
 _inflight = {"board": False, "resets": False}
+_inflight_at = {"board": 0.0, "resets": 0.0}
+INFLIGHT_TIMEOUT = 120            # 后台线程卡住时别把面板永远锁在"抓取中"
 
 
 # --------------------------------------------------------------------------
@@ -342,12 +344,19 @@ def cached(days=14):
                            and time.time() - board["fetchedAt"] < BOARD_TTL)
         resets_stale = not (cache.get("resetsAt")
                             and time.time() - cache["resetsAt"] < RESET_TTL)
-        start_board = board_stale and not _inflight["board"]
-        start_resets = resets_stale and not _inflight["resets"]
+        # 一个卡死的后台线程（例如 DNS 挂住）不该让刷新永久停摆：
+        # 超过 INFLIGHT_TIMEOUT 就当它不存在，重新发起一次。
+        now = time.time()
+        board_busy = _inflight["board"] and now - _inflight_at["board"] < INFLIGHT_TIMEOUT
+        resets_busy = _inflight["resets"] and now - _inflight_at["resets"] < INFLIGHT_TIMEOUT
+        start_board = board_stale and not board_busy
+        start_resets = resets_stale and not resets_busy
         if start_board:
             _inflight["board"] = True
+            _inflight_at["board"] = now
         if start_resets:
             _inflight["resets"] = True
+            _inflight_at["resets"] = now
 
     if start_board:
         threading.Thread(target=_bg_board, daemon=True).start()

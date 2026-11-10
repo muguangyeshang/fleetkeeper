@@ -12,6 +12,17 @@ import pytest
 import fleetkeeper.quota as Q
 
 
+@pytest.fixture(autouse=True)
+def _isolate_inflight():
+    """_inflight 是模块级状态：别的测试（例如 test_ui 打 /api/state）可能刚起过
+    后台线程，不清掉会让本文件里的 loading 断言看别人的状态。"""
+    Q._inflight.update(board=False, resets=False)
+    Q._inflight_at.update(board=0.0, resets=0.0)
+    yield
+    Q._inflight.update(board=False, resets=False)
+    Q._inflight_at.update(board=0.0, resets=0.0)
+
+
 def _card(name, value, status="还没领"):
     kind, worth = Q.classify(value)
     return {"id": name, "name": name, "value": value, "status": status,
