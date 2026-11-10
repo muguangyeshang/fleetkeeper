@@ -123,7 +123,8 @@ external references.
 
 | Area | What it does |
 |---|---|
-| KPI strip | total / protocol-healthy / needs-attention / down / business-evidence / cumulative events, plus paused and fresh-heartbeat counts |
+| KPI strip | total / protocol-healthy / needs-attention / down / business-evidence / cumulative events / today's free quota, plus paused and fresh-heartbeat counts |
+| Free quota | today's unclaimed amount, 可领/现金/重置 counts, a filterable card wall and recent reset windows — see [Free quota](#free-quota) |
 | Toolbar | one-shot check, one-shot sweep, **resident watchdog** with a configurable 5-3600 s interval, full report, notification test, 通知设置 (webhook, validated), config export, 开机自启 (opt-in logon task), auto-refresh toggle, stop |
 | Service cards | L0-L4 ladder rendered as five steps, PID, heartbeat status and age, health path, canary path, issues, evidence; per-card re-check, heartbeat injection, edit, pause, delete |
 | Timeline | filter by window (24h / 7d / 30d / all), event kind, service and row count |
@@ -144,12 +145,52 @@ stores a webhook URL that must parse as http(s) -- these are the only
 execution settings the console can change. Pausing moves a service into
 `registry.paused`, which the watchdog already ignores.
 
+## Free quota
+
+A service can sit at L4 and still be useless: the gateway answers, but the
+upstream key behind it ran dry. `fleetkeeper quota` closes that half of the
+picture using public, keyless data from [aihot.news](https://aihot.news/free-tokens)
+— the daily wall of free grants, plus the reset events for Codex / Claude /
+Antigravity.
+
+```bash
+fleetkeeper quota                 # table: cash first, then unit, then free
+fleetkeeper quota --json          # the same shape the dashboard consumes
+fleetkeeper quota --refresh       # ignore the 30 min cache
+```
+
+The console renders it as a 免费额度 panel under 我的服务: today's unclaimed
+amount, 可领 / 现金 / 重置 counts, a filterable card wall, and the recent
+reset events. Two API surfaces, on purpose:
+
+| Endpoint | Shape | Used by |
+|---|---|---|
+| `GET /api/state` | `quota` = summary only (numbers, no cards) | the 5 s poll |
+| `GET /api/quota` | full snapshot, 50 cards + reset events | the panel, once per 5 min |
+
+`quota.cached()` never blocks: it serves the on-disk cache and starts a
+background refresh when stale. A slow or offline upstream therefore cannot
+stall the dashboard — the worst case is a stale number with its age shown.
+
+Upstream limits are handled, not ignored:
+
+- the card wall 403s the default `urllib` UA → a browser UA is mandatory;
+- the full reset history is served once per 10 minutes per client → the TTL is
+  15 minutes, and a 429 falls back to `/recent` (marked `partial`) instead of
+  blanking the panel for ten minutes;
+- one dead product never sinks the others: each stream fails on its own and
+  lands in `resetErrors`.
+
+Cache: `~/.fleetkeeper/quota.json` (`FLEETKEEPER_HOME` overrides it). No
+account, no token, nothing written back to any provider.
+
 ## Contents
 
 - [Who this is for](#who-this-is-for)
 - [Install](#install)
 - [What it looks like](#what-it-looks-like)
 - [The dashboard](#the-dashboard)
+- [Free quota](#free-quota)
 - [Documentation](#documentation)
 - [Project layout](#project-layout)
 - [Why this exists](#why-this-exists)

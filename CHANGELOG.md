@@ -6,6 +6,23 @@ Format: newest first, `Unreleased` at the top, grouped by Improvements / Bug Fix
 ## Unreleased
 
 ### Improvements
+- 免费额度: a service can sit at L4 and still be useless if the upstream key
+  behind the gateway ran dry. `src/fleetkeeper/quota.py` pulls the public,
+  keyless grant wall and reset streams from aihot.news, and the console grows
+  a 免费额度 panel (today's unclaimed amount, filterable card wall, reset
+  windows) plus a seventh KPI. `fleetkeeper quota [--json] [--refresh]` is the
+  CLI twin.
+  - Two surfaces on purpose: `/api/state` carries only the numbers so the 5 s
+    poll never touches the public internet; the 50 cards come from a separate
+    `/api/quota` loaded once per 5 min. `quota.cached()` serves the disk cache
+    and refreshes in a background thread, so a dead upstream shows a stale
+    number instead of hanging the dashboard.
+  - Upstream limits are part of the contract: browser UA mandatory (the page
+    403s urllib), 15 min TTL on the reset streams, and a 429 falls back to
+    `/recent` marked `partial` rather than blanking the panel. One failing
+    product never sinks the other two.
+  - 11 offline tests cover the parsers, the ordering rule, the 429 fallback and
+    the non-blocking cache.
 - `fleetkeeper doctor` now diagnoses the panel itself, not only the fleet:
   the config path, whether the logon autostart task exists, and whether a
   webhook would actually fire. A user who cannot open the console and a user

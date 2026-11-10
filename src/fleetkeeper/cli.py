@@ -13,6 +13,7 @@
     fleetkeeper watch [--interval S]                     run sweeps in a loop
     fleetkeeper history [--last 24h] [--json]            incident timeline
     fleetkeeper logs SERVICE [--tail N]                  logs, redacted by default
+    fleetkeeper quota [--json] [--refresh]               免费额度 + 重置窗口
 
     --config is accepted before or after the subcommand.
 """
@@ -22,7 +23,7 @@ import os
 import sys
 import time
 
-from . import discover, evidence, heartbeat, history, redact, safeio, template, watchdog
+from . import discover, evidence, heartbeat, history, quota, redact, safeio, template, watchdog
 from . import manage as manage_mod
 from . import report as report_mod  # cmd_doctor has a local variable named `report`
 
@@ -373,6 +374,23 @@ def cmd_discover(args):
     return 0
 
 
+def cmd_quota(args):
+    """免费额度与重置窗口。
+
+    和 status/doctor 不是一回事：那两条走本机端口，这条走公网，量的是
+    "上游今天还给不给免费用"。取不到数时照样打印缓存，退出码只在完全
+    没数据时才非零——面板里有旧数字，比空屏有用。
+    """
+    snap = quota.snapshot(days=args.days, refresh=args.refresh)
+    if args.json:
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+    else:
+        print(quota.render_table(snap))
+    if snap.get("cards"):
+        return 0
+    return 1 if snap.get("error") else 0
+
+
 def cmd_logs(args):
     cfg = _load(args.config)
     key, svc = _resolve_service(cfg, args.service)
@@ -511,6 +529,13 @@ def build_parser():
     hs.add_argument("--limit", type=int, default=50)
     hs.add_argument("--json", action="store_true")
     hs.set_defaults(func=cmd_history)
+
+    q = sub.add_parser("quota", parents=[child],
+                       help="free quota + reset windows (public, no key)")
+    q.add_argument("--days", type=int, default=14, help="reset window in days")
+    q.add_argument("--refresh", action="store_true", help="ignore the 30min cache")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_quota)
 
     lg = sub.add_parser("logs", parents=[child],
                         help="show service logs (redacted by default)")

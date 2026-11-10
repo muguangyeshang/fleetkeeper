@@ -58,7 +58,7 @@ main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
  border-radius:12px;font-size:13px}
 .welcome .w-main{font-weight:650;color:var(--brand)}
 .welcome .w-sub{color:var(--sub);font-size:12px;flex:1;min-width:0}
-.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;
  padding:13px 15px;box-shadow:var(--shadow);position:relative;overflow:hidden;min-height:86px}
 .kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--brand)}
@@ -68,6 +68,41 @@ main{max-width:1420px;margin:0 auto;padding:20px 22px 56px}
 .kpi .k-num{font-size:27px;font-weight:700;line-height:1.15;letter-spacing:-.5px}
 .kpi .k-foot{font-size:11px;color:var(--sub);display:block;margin-top:3px;
  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi.gold:before{background:#d69a20}
+/* 免费额度：和「服务健康」并列的第二类信息。数据走公网、半小时才变一次，
+   所以单独一条面板 + 单独的 /api/quota，不混进 5 秒轮询的 state。 */
+.q-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;
+ padding:14px 16px;border-radius:12px;color:#fff;margin-bottom:11px;
+ box-shadow:0 10px 26px -18px rgba(38,54,160,.9);
+ background:linear-gradient(130deg,#1b2744 0%,#2f47c6 62%,#4d6bfe 100%)}
+.q-main{display:flex;align-items:baseline;gap:2px;line-height:1}
+.q-main small{font-size:15px;font-weight:650;opacity:.82}
+.q-main b{font-size:36px;font-weight:800;letter-spacing:-1.5px;font-variant-numeric:tabular-nums}
+.q-cap{font-size:11.5px;opacity:.8;margin-left:7px}
+.q-sub{font-size:11.5px;opacity:.8;margin-top:5px}
+.q-stats{display:flex;gap:18px}
+.q-stats div{display:flex;flex-direction:column;gap:2px;font-size:11px;opacity:.85;min-width:44px}
+.q-stats b{font-size:17px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.q-tabs{display:flex;gap:6px;margin-bottom:9px;flex-wrap:wrap}
+.q-tabs button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.q-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(134px,1fr));gap:8px}
+.q-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;
+ padding:8px 9px 8px 12px;display:flex;flex-direction:column;gap:2px;min-height:56px}
+.q-card:before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;
+ border-radius:0 3px 3px 0;background:var(--brand)}
+.q-card.k-money:before{background:#d69a20}
+.q-card.k-free:before{background:var(--ok)}
+.q-card .qn{font-size:11.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-card .qn a{color:inherit;text-decoration:none}
+.q-card .qn a:hover{color:var(--brand)}
+.q-card .qv{margin-top:auto;font-size:15px;font-weight:750;letter-spacing:-.4px;
+ font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-card.done{opacity:.5}
+.q-card.done .qv{text-decoration:line-through}
+.q-card.gone{opacity:.38}
+.q-reset{margin-top:11px;border-top:1px dashed var(--line);padding-top:8px}
+.q-reset .qr{display:flex;gap:8px;font-size:11.5px;color:var(--sub);padding:2px 0;align-items:baseline}
+.q-reset .qr b{color:var(--ink);font-weight:600}
 .toolbar{background:var(--card);border:1px solid var(--line);border-radius:12px;
  padding:11px 14px;display:flex;flex-wrap:wrap;gap:9px;align-items:center;
  box-shadow:var(--shadow);margin-bottom:12px}
@@ -191,9 +226,10 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
 .editor .foot{display:flex;gap:8px;margin-top:14px}
 .foot-note{font-size:11.5px;color:var(--sub);margin-top:10px;line-height:1.5}
 @media(max-width:1240px){.cols{grid-template-columns:minmax(0,1fr) 340px}}
-@media(max-width:1120px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1120px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:900px){.cols{grid-template-columns:1fr}header{padding:14px 16px}
- main{padding:16px 12px 40px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+ main{padding:16px 12px 40px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .q-stats{gap:12px}.q-main b{font-size:30px}}
 </style>
 </head>
 <body>
@@ -220,6 +256,7 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
     <div class="kpi bad"><span class="k-label">未通过</span><span class="k-num" id="kpi-down">–</span><span class="k-foot">进程或端口不通</span></div>
     <div class="kpi info"><span class="k-label">业务证据达成</span><span class="k-num" id="kpi-business">–</span><span class="k-foot">业务探针真的过了</span></div>
     <div class="kpi"><span class="k-label">累计事件</span><span class="k-num" id="kpi-events">–</span><span class="k-foot" id="kpi-events-foot">守护 / 恢复 / 告警</span></div>
+    <div class="kpi gold"><span class="k-label">今日可领</span><span class="k-num" id="kpi-quota">–</span><span class="k-foot" id="kpi-quota-foot">免费额度</span></div>
   </div>
 
   <div class="toolbar">
@@ -248,6 +285,32 @@ pre{background:#101a2e;color:#dbe6ff;border-radius:9px;padding:12px;font-size:11
         <h2>我的服务 <span class="count" id="count"></span>
           <span class="right" id="health-hint">L0 配置 · L1 进程 · L2 端口 · L3 协议 · L4 业务</span></h2>
         <div class="grid" id="cards"></div>
+      </section>
+
+      <section class="panel" id="quota-panel">
+        <h2>免费额度 <span class="count" id="q-count"></span>
+          <span class="right" id="q-asof">每天 08:00 换一批</span></h2>
+        <div class="q-hero">
+          <div>
+            <div class="q-main"><small>¥</small><b id="q-today">–</b><span class="q-cap">今天还能领</span></div>
+            <div class="q-sub" id="q-sub">正在读取…</div>
+          </div>
+          <div class="q-stats">
+            <div><b id="q-todo">–</b><span>可领卡</span></div>
+            <div><b id="q-money">–</b><span>现金卡</span></div>
+            <div><b id="q-resetn">–</b><span>重置事件</span></div>
+          </div>
+        </div>
+        <div class="q-tabs" id="q-tabs">
+          <button class="mini on" data-k="all">全部</button>
+          <button class="mini" data-k="money">现金</button>
+          <button class="mini" data-k="unit">额度</button>
+          <button class="mini" data-k="free">免费</button>
+        </div>
+        <div class="q-grid" id="q-grid"><p class="hint">正在读取免费额度，第一次要几秒…</p></div>
+        <div id="q-resets"></div>
+        <p class="hint">这些是各家 AI 服务的公开免费额度，和上面的服务健康是两件事：
+        服务可能一切正常，但背后的额度已经用完。数据来自 aihot.news，本机不存任何账号。</p>
       </section>
 
       <section class="panel">
@@ -763,9 +826,70 @@ function render(st){
  setConn('已连接 · '+esc(st.generated_at||''),'');
  el('cfgpath').textContent=esc(st.config_path||'-');
  renderKpi(st.overview||{});
+ renderQuotaKpi(st.quota||{});
+ loadQuota();
  renderServices(st);
  renderTimeline(st.history||[]);
  renderAlerts(st.overview||{});
+}
+var qstate={data:null,at:0,kind:'all',loading:false};
+function loadQuota(force){
+ if(qstate.loading)return;
+ if(!force&&qstate.at&&Date.now()-qstate.at<300000)return;   // 额度 30 分钟才变，别跟着 5 秒轮询跑
+ qstate.loading=true;
+ api('/api/quota').then(function(d){
+   qstate.loading=false;qstate.data=d;qstate.at=Date.now();renderQuota();
+ }).catch(function(){qstate.loading=false;});
+}
+function renderQuotaKpi(q){
+ q=q||{};var st=q.stats||{};
+ el('kpi-quota').textContent=(q.todayTotal==null?'–':Math.round(q.todayTotal));
+ el('kpi-quota-foot').textContent=(st.todo||0)+' 张可领'+
+   (q.resetCount?(' · '+q.resetCount+' 次重置'):(q.error?' · 取数失败':''));
+}
+function renderQuota(){
+ var d=qstate.data;if(!d)return;
+ var st=d.stats||{};
+ el('q-today').textContent=(d.todayTotal==null?'–':Math.round(d.todayTotal));
+ el('q-sub').textContent='本月已领 ¥'+Math.round(d.monthTotal||0)+(d.error?(' · '+d.error):'');
+ el('q-todo').textContent=st.todo||0;
+ el('q-money').textContent=st.money||0;
+ el('q-resetn').textContent=(d.resets||[]).length;
+ el('q-count').textContent='('+(st.total||0)+')';
+ el('q-asof').textContent=d.asOf?('数据 '+d.asOf.slice(0,16)):'';
+ var cards=(d.cards||[]).filter(function(c){
+   return qstate.kind==='all'||c.kind===qstate.kind;
+ });
+ var h='';
+ for(var i=0;i<cards.length;i++){
+   var c=cards[i];
+   var nm=c.url?('<a href="'+esc(c.url)+'" target="_blank" rel="noopener">'+esc(c.name)+'</a>'):esc(c.name);
+   var cls='q-card k-'+esc(c.kind)+(c.state==='done'?' done':(c.state==='gone'?' gone':''));
+   h+='<div class="'+cls+'" title="'+esc(c.status||'')+'">'+
+      '<span class="qn">'+nm+'</span><span class="qv">'+esc(c.value||'')+'</span></div>';
+ }
+ el('q-grid').innerHTML=h||'<p class="hint">这个筛选下没有卡。</p>';
+ var rs=d.resets||[];
+ if(rs.length){
+   var rt='<div class="q-reset">';
+   for(var j=0;j<Math.min(rs.length,6);j++){
+     var r=rs[j];
+     rt+='<div class="qr"><span>'+esc(r.time||'')+'</span><b>'+esc(r.product||'')+'</b>'+
+         '<span>'+esc((r.title||'').slice(0,40))+'</span></div>';
+   }
+   el('q-resets').innerHTML=rt+'</div>';
+ }
+ if(!el('q-tabs').dataset.bound){
+   el('q-tabs').dataset.bound='1';
+   el('q-tabs').addEventListener('click',function(ev){
+     var b=ev.target.closest('button');if(!b)return;
+     qstate.kind=b.getAttribute('data-k');
+     var all=el('q-tabs').querySelectorAll('button');
+     for(var i=0;i<all.length;i++)all[i].classList.remove('on');
+     b.classList.add('on');
+     renderQuota();
+   });
+ }
 }
 function refresh(){
  if(stopped)return Promise.resolve(false);

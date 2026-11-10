@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import cli as cli_mod
-from . import discover, history, manage, redact, safeio, template, watchdog
+from . import discover, history, manage, quota, redact, safeio, template, watchdog
 from . import report as report_mod
 
 MAX_BODY_BYTES = 65536
@@ -140,9 +140,16 @@ def state(path, server=None):
     loop = getattr(server, "fk_watch", None) if server else None
     watch = loop.status() if loop else {}
     ov = manage.overview(cfg, path, rows, started=started, watch=watch)
+    # 额度只放概览数字：/api/state 每 5 秒轮询一次，50 张卡的明细走
+    # /api/quota 按需拉。quota.cached() 永不阻塞，过期才起后台线程。
+    try:
+        qs = quota.summary(quota.cached())
+    except Exception as exc:                       # noqa: BLE001 额度挂了不能拖垮面板
+        qs = {"error": redact.redact(str(exc))[:120], "stats": {}}
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "config_path": os.path.abspath(path),
+        "quota": qs,
         "services": rows,
         "history": _history_rows(cfg, path),
         "service_count": len(rows),
@@ -325,6 +332,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 return self._html(report_mod.render(doctor_report(self.cfg_path)))
             if route == "/api/state":
                 return self._json(state(self.cfg_path, self.server))
+            if route == "/api/quota":
+                # 只读缓存 + 触发后台刷新，绝不在这条请求上等公网
+                return self._json(quota.cached())
             if route == "/api/overview":
                 cfg = _load(self.cfg_path)
                 rows = manage.evaluate_rows(cfg, self.cfg_path)

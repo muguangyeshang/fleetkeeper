@@ -8,7 +8,7 @@ a = Analysis(
     datas=[],
     hiddenimports=['fleetkeeper.ui', 'fleetkeeper.cli', 'fleetkeeper.watchdog',
                    'fleetkeeper.page', 'fleetkeeper.manage',
-                   'fleetkeeper.discover'],
+                   'fleetkeeper.discover', 'fleetkeeper.quota'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
